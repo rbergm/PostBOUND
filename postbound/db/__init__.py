@@ -30,7 +30,6 @@ Supported Systems
 -----------------
 
 PostBOUND ships database backends for PostgreSQL and DuckDB out of the box. Both are available in dedicated top-level modules.
-In addition, there is rudimentary support for MySQL, but this backend is not actively maintained.
 
 Users can implement their own database backends for specific systems by subclassing `Database` and the other relevant classes.
 
@@ -79,6 +78,7 @@ from __future__ import annotations
 
 from ._cache import ResultCache
 from ._db import (
+    ColumnInfo,
     Connection,
     Cursor,
     Database,
@@ -94,10 +94,12 @@ from ._db import (
     MostCommonValues,
     OptimizerInterface,
     PrewarmingSupport,
+    PrimaryKeyRef,
     ResultRow,
     ResultSet,
     StatisticsCatalog,
     StopwatchSupport,
+    TableInfo,
     TimeoutSupport,
     UnsupportedDatabaseFeatureError,
     current_database,
@@ -123,6 +125,7 @@ value.
 """
 
 __all__ = [
+    "ColumnInfo",
     "Connection",
     "Cursor",
     "Database",
@@ -139,11 +142,13 @@ __all__ = [
     "OptimizerInterface",
     "PreciseStatistics",
     "PrewarmingSupport",
+    "PrimaryKeyRef",
     "ResultCache",
     "ResultRow",
     "ResultSet",
     "StatisticsCatalog",
     "StopwatchSupport",
+    "TableInfo",
     "TimeoutSupport",
     "UnsupportedDatabaseFeatureError",
     "current_database",

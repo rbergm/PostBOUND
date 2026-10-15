@@ -722,6 +722,34 @@ class TableReference:
         """
         return TableReference(full_name, alias, virtual=True, schema=schema, catalog=catalog)
 
+    @staticmethod
+    def from_components(components: Iterable[str]) -> TableReference:
+        """Creates a new table reference from a sequence of components.
+
+        The components must contain the table name as the last element, optionally preceded by the schema and catalog.
+        For example, the following sequences are valid:
+
+        - ["movie"] -> TableReference("movie")
+        - ["public", "movie"] -> TableReference("movie", schema="public")
+        - ["my_catalog", "public", "movie"] -> TableReference("movie", schema="public", catalog="my_catalog")
+
+        If the components contain any other number of elements, an error is raised.
+        """
+        if not isinstance(components, Sequence):
+            components = list(components)
+
+        match len(components):
+            case 1:
+                return TableReference(components[0])
+            case 2:
+                schema, name = components
+                return TableReference(name, schema=schema)
+            case 3:
+                catalog, schema, name = components
+                return TableReference(name, schema=schema, catalog=catalog)
+            case _:
+                raise ValueError(f"Could not parse table reference with components {components}")
+
     def __init__(
         self,
         full_name: str,

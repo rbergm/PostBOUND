@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import collections
 import configparser
 import datetime
 import functools
@@ -16,7 +17,7 @@ import time
 import tomllib
 import warnings
 from collections import UserString
-from collections.abc import Iterable, Sized
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
@@ -55,6 +56,7 @@ from ..db import (
     DatabaseSchema,
     DatabaseServerError,
     DatabaseUserError,
+    ForeignKeyRef,
     HintService,
     HintWarning,
     Histogram,
@@ -452,24 +454,14 @@ class PostgresDatabase(Database):
             if table.full_name.startswith("pg_"):
                 continue  # skip system tables
 
-            column_info: list[jsondict] = []
-
-            for column in self._db_schema.columns(table):
-                column_info.append(
-                    {
-                        "column": str(column),
-                        "indexed": self.schema().has_index(column),
-                        "foreign_keys": self._db_schema.foreign_keys_on(column),
-                    }
-                )
-
-            pk_col = self._db_schema.primary_key_column(table)
             schema_info.append(
                 {
                     "table": str(table),
                     "n_rows": self.statistics().total_rows(table),
-                    "columns": column_info,
-                    "primary_key": pk_col.name if pk_col else None,
+                    "columns": self._db_schema.columns(table),
+                    "primary_key": self._db_schema.primary_key_of(table),
+                    "foreign_keys": self._db_schema.all_foreign_keys_on(table),
+                    "indexes": self._db_schema.all_indexes_on(table),
                 }
             )
 
@@ -908,7 +900,9 @@ class PostgresSchema(DatabaseSchema):
     """
 
     def __init__(self, postgres_db: PostgresDatabase) -> None:
-        super().__init__(postgres_db)
+        super().__init__(
+            postgres_db, prep_placeholder="%s", default_schema="public", default_catalog=postgres_db.database_name()
+        )
         self._table_cache = False
         self._user_tables: set[TableReference] = set()
         self._system_tables: set[TableReference] = set()
@@ -916,6 +910,8 @@ class PostgresSchema(DatabaseSchema):
     def tables(
         self, *, catalog: str = "", schema: str = "", include_system_tables: bool = False
     ) -> set[TableReference]:
+        # we use a custom implementation here to avoid querying the system catalogs unnecessarily.
+        # in the past, this has been a frequent bottleneck when parsing huge queries.
         if self._table_cache:
             return self._user_tables | self._system_tables if include_system_tables else self._user_tables
 
@@ -925,242 +921,88 @@ class PostgresSchema(DatabaseSchema):
 
         return self._user_tables | self._system_tables if include_system_tables else self._user_tables
 
-    def lookup_column(
-        self,
-        column: ColumnReference | str,
-        candidate_tables: Iterable[TableReference],
-        *,
-        expect_match: bool = False,
-    ) -> TableReference | None:
-        if not isinstance(candidate_tables, Sized):
-            candidate_tables = list(candidate_tables)
-        candidate_tables = set(candidate_tables) if len(candidate_tables) > 5 else list(candidate_tables)
-        column = column.name if isinstance(column, ColumnReference) else column
-        lower_col = column.lower()
+    def all_foreign_keys_on(self, table: TableReference | str) -> set[ForeignKeyRef]:
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
 
-        for table in candidate_tables:
-            table_columns = self._fetch_columns(table)
-            if column in table_columns or lower_col in table_columns:
-                return table
+        schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
+        query_template = f"""
+            SELECT con.conname, att.attname, tar_nsp.nspname, tar.relname, tar_att.attname
+            FROM pg_constraint con
+                JOIN pg_class cls ON cls.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
+                JOIN pg_class tar ON tar.oid = con.confrelid
+                JOIN pg_namespace tar_nsp ON tar_nsp.oid = tar.relnamespace
+                CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS keys(attnum, refattnum, ord)
+                JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = keys.attnum
+                JOIN pg_attribute tar_att ON tar_att.attrelid = con.confrelid AND tar_att.attnum = keys.refattnum
+            WHERE con.contype = 'f'
+                AND cls.relname = %s
+                AND nsp.nspname = {schema_placeholder}
+            ORDER BY con.oid, keys.ord
+            """
 
-        if not expect_match:
-            return None
-        table_strings = [table.qualified_name() for table in candidate_tables]
-        raise ValueError(f"Column '{column}' not found in candidate tables {table_strings}")
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
 
-    def is_primary_key(self, column: ColumnReference) -> bool:
-        if not column.table:
-            raise UnboundColumnError(column)
-        if column.table.virtual:
-            raise VirtualTableError(column.table)
-        index_map = self._fetch_indexes(column.table)
-        return index_map.get(column.name, False)
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
 
-    def has_secondary_index(self, column: ColumnReference) -> bool:
-        if not column.table:
-            raise UnboundColumnError(column)
-        if column.table.virtual:
-            raise VirtualTableError(column.table)
-        index_map = self._fetch_indexes(column.table)
+        fk_constraints: dict[str, list[BoundColumnReference]] = collections.defaultdict(list)
+        fk_targets: dict[str, list[BoundColumnReference]] = collections.defaultdict(list)
 
-        # The index map contains an entry for each attribute that actually has an index. The value is True, if the
-        # attribute (which is known to be indexed), is even the Primary Key
-        # Our method should return False in two cases: 1) the attribute is not indexed at all; and 2) the attribute
-        # actually is the Primary key. Therefore, by assuming it is the PK in case of absence, we get the correct
-        # value.
-        return not index_map.get(column.name, True)
+        for row in result_set:
+            constraint, fk_col, target_schema, target_table, target_col = row
+            fk_col_ref = ColumnReference(fk_col, table)
+            fk_constraints[constraint].append(fk_col_ref)
 
-    def indexes_on(self, column: ColumnReference) -> set[str]:
-        if not column.table:
-            raise UnboundColumnError(column)
-        if column.table.virtual:
-            raise VirtualTableError(column.table)
-        schema = column.table.schema or "public"
-        query_template = textwrap.dedent("""
-            SELECT cls.relname
+            target_tab = self._as_tabref(target_table, catalog=table.catalog, schema=target_schema)
+            target_col_ref = ColumnReference(target_col, target_tab)
+            fk_targets[constraint].append(target_col_ref)
+
+        return {ForeignKeyRef(fk_cols, fk_targets[constraint]) for constraint, fk_cols in fk_constraints.items()}
+
+    def all_indexes_on(self, table: TableReference | str) -> Mapping[str, set[BoundColumnReference]]:
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
+        schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
+
+        query_template = f"""
+        WITH ind AS (
+            SELECT rel.oid AS relid,
+                nsp.nspname AS nspname,
+                rel.relname AS relname,
+                cls.relname AS indname,
+                unnest(idx.indkey) as attnum,
+                generate_series(1, array_length(idx.indkey, 1)) as attind
             FROM pg_index idx
                 JOIN pg_class cls ON idx.indexrelid = cls.oid
                 JOIN pg_class rel ON idx.indrelid = rel.oid
-                JOIN pg_attribute att ON att.attnum = ANY(idx.indkey) AND idx.indrelid = att.attrelid
-                JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid AND rel.relnamespace = nsp.oid
-            WHERE rel.relname = %s
-                AND att.attname = %s
-                AND nsp.nspname = %s
-        """)
-
-        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
-        result_set = self._db.cursor().fetchall()
-        assert result_set is not None
-
-        return {row[0] for row in result_set}
-
-    def indexed_column(self, index: str, *, schema: str = "public") -> BoundColumnReference | None:
-        """Retrieves the column that is indexed by a specific index.
-
-        Returns
-        -------
-        Optional[ColumnReference]
-            The column or *None*, if the index does not exist (in the given schema). For multi-indexes, i.e. indexes over
-            multiple columns, this returns the first column only.
-        """
-        query_template = textwrap.dedent("""
-            SELECT att.attname, rel.relname
-            FROM pg_index idx
-                JOIN pg_class cls ON idx.indexrelid = cls.oid
-                JOIN pg_class rel ON idx.indrelid = rel.oid
-                JOIN pg_attribute att ON att.attnum = ANY(idx.indkey) AND idx.indrelid = att.attrelid
-                JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid AND rel.relnamespace = nsp.oid
-            WHERE cls.relname = %s
-                AND nsp.nspname = %s
-        """)
-
-        self._db.cursor().execute(query_template, (index, schema))
-        result_set = self._db.cursor().fetchall()
-        assert result_set is not None
-
-        if not result_set:
-            return None
-        if len(result_set) > 1:
-            warnings.warn(
-                f"Multi-index {index} detected. Only returning the first column",
-                stacklevel=2,
-            )
-            result_set = result_set[:1]
-
-        col, tab = result_set[0]
-        return ColumnReference.create(col, table=tab)
-
-    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
-        if not column.table:
-            raise UnboundColumnError(column)
-        if column.table.virtual:
-            raise VirtualTableError(column.table)
-        schema = column.table.schema or "public"
-        query_template = textwrap.dedent("""
-            SELECT target.table_name, target.column_name
-            FROM information_schema.key_column_usage AS fk_sources
-                JOIN information_schema.table_constraints AS all_constraints
-                ON fk_sources.constraint_name = all_constraints.constraint_name
-                    AND fk_sources.table_schema = all_constraints.table_schema
-                JOIN information_schema.constraint_column_usage AS target
-                ON fk_sources.constraint_name = target.constraint_name
-                    AND fk_sources.table_schema = target.table_schema
-            WHERE fk_sources.table_name = %s
-                AND fk_sources.column_name = %s
-                AND fk_sources.table_schema = %s
-                AND all_constraints.constraint_type = 'FOREIGN KEY'
-            """)
-
-        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
-        result_set = self._db.cursor().fetchall()
-        assert result_set is not None
-
-        return {BoundColumnReference(row[1], TableReference(row[0])) for row in result_set}
-
-    def datatype(self, column: ColumnReference, *, raw: bool = False) -> str:
-        if not column.table:
-            raise UnboundColumnError(column)
-        if column.table.virtual:
-            raise VirtualTableError(column.table)
-        schema = column.table.schema or "public"
-        query_template = textwrap.dedent("""
-            SELECT data_type FROM information_schema.columns
-            WHERE table_name = %s AND column_name = %s AND table_schema = %s""")
-
-        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
-        result_set = self._db.cursor().fetchone()
-        assert result_set
-
-        dtype: str = result_set[0]
-        return dtype if raw else dtype.lower()
-
-    def is_nullable(self, column: ColumnReference) -> bool:
-        if not column.table:
-            raise UnboundColumnError(column)
-        if column.table.virtual:
-            raise VirtualTableError(column.table)
-        schema = column.table.schema or "public"
-        query_tempalte = textwrap.dedent("""
-            SELECT is_nullable = 'YES' FROM information_schema.columns
-            WHERE table_name = %s AND column_name = %s AND table_schema = %s""")
-
-        self._db.cursor().execute(query_tempalte, (column.table.full_name, column.name, schema))
-        result_set = self._db.cursor().fetchone()
-        assert result_set
-
-        return result_set[0]
-
-    def _fetch_columns(self, table: TableReference) -> list[str]:
-        """Retrieves all physical columns for a given table from the PG metadata catalogs.
-
-        Parameters
-        ----------
-        table : TableReference
-            The table whose columns should be loaded
-
-        Returns
-        -------
-        list[str]
-            The names of all columns
-
-        Raises
-        ------
-        VirtualTableError
-            If the table is a virtual table (e.g. subquery or CTE)
-        """
-        if table.virtual:
-            raise VirtualTableError(table)
-        schema = table.schema or "public"
-        query_template = (
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %s AND table_schema = %s"
+                JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
         )
-
-        self._db.cursor().execute(query_template, (table.full_name, schema))
-        result_set = self._db.cursor().fetchall()
-        assert result_set is not None
-
-        return [col[0] for col in result_set]
-
-    def _fetch_indexes(self, table: TableReference) -> dict[str, bool]:
-        """Retrieves all index structures for a given table based on the PG metadata catalogs.
-
-        Parameters
-        ----------
-        table : TableReference
-            The table whose indexes should be loaded
-
-        Returns
-        -------
-        dict
-            Contains a key for each column that has an index. The column keys map to booleans that indicate whether
-            the corresponding index is a primary key index. Columns without any index do not appear in the dictionary.
-
-        Raises
-        ------
-        VirtualTableError
-            If the table is a virtual table (e.g. subquery or CTE)
+        SELECT ind.indname, att.attname
+        FROM ind, pg_attribute att
+        WHERE ind.relid = att.attrelid
+            AND ind.attnum = att.attnum
+            AND ind.relname = %s
+            AND ind.nspname = {schema_placeholder};
         """
-        if table.virtual:
-            raise VirtualTableError(table)
-        # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
-        table_name = table.full_name
-        schema = table.schema or "public"
-        index_query = textwrap.dedent("""
-            SELECT attr.attname, idx.indisprimary
-            FROM pg_index idx
-                JOIN pg_attribute attr ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
-                JOIN pg_class cls ON idx.indrelid = cls.oid
-                JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid
-            WHERE cls.relname = %s
-                AND nsp.nspname = %s
-        """)
 
-        self._db.cursor().execute(index_query, (table_name, schema))
-        result_set = self._db.cursor().fetchall()
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
         assert result_set is not None
 
-        index_map = dict(result_set)
-        return index_map
+        index_cols: dict[str, set[BoundColumnReference]] = collections.defaultdict(set)
+        for constraint, col in result_set:
+            column = ColumnReference(col, table)
+            index_cols[constraint].add(column)
+        return index_cols
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._db == other._db

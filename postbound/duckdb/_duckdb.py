@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import contextlib
 import json
@@ -8,16 +9,15 @@ import textwrap
 import time
 import warnings
 from collections import UserString
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, overload
 
 import quacklab
 
-from .. import db, qal, transform
+from .. import BoundColumnReference, db, qal, transform
 from .._core import (
-    BoundColumnReference,
     Cardinality,
     ColumnReference,
     Cost,
@@ -25,7 +25,6 @@ from .._core import (
     PhysicalOperator,
     ScanOperator,
     TableReference,
-    UnboundColumnError,
 )
 from .._hints import (
     HintType,
@@ -41,6 +40,7 @@ from ..db import (
     Database,
     DatabasePool,
     DatabaseSchema,
+    ForeignKeyRef,
     HintService,
     Histogram,
     HistogramApproximation,
@@ -205,23 +205,14 @@ class DuckDBDatabase(Database):
 
         schema_info: list[jsondict] = []
         for table in self._schema.tables():
-            column_info: list[jsondict] = []
-
-            for column in self._schema.columns(table):
-                column_info.append(
-                    {
-                        "column": str(column),
-                        "indexed": self._schema.has_index(column),
-                        "foreign_keys": self._schema.foreign_keys_on(column),
-                    }
-                )
-
             schema_info.append(
                 {
                     "table": str(table),
                     "n_rows": self.statistics().total_rows(table),
-                    "columns": column_info,
-                    "primary_key": self._schema.primary_key_column(table),
+                    "columns": self._schema.columns(table),
+                    "primary_key": self._schema.primary_key_of(table),
+                    "foreign_keys": self._schema.all_foreign_keys_on(table),
+                    "indexes": self._schema.all_indexes_on(table),
                 }
             )
 
@@ -251,7 +242,7 @@ class DuckDBSchema(DatabaseSchema):
     """
 
     def __init__(self, db: DuckDBDatabase) -> None:
-        super().__init__(db, prep_placeholder="?")
+        super().__init__(db, prep_placeholder="?", default_schema="main", default_catalog=db.database_name())
         self._tables: set[TableReference] = set()
 
     def tables(
@@ -267,7 +258,7 @@ class DuckDBSchema(DatabaseSchema):
             FROM duckdb_tables()
             WHERE lower(database_name) = lower({catalog_placeholder})
                 AND lower(schema_name) = lower({schema_placeholder})
-        """
+            """
 
         params: list[str] = []
         if catalog:
@@ -284,133 +275,87 @@ class DuckDBSchema(DatabaseSchema):
         self._tables = tables
         return self._tables
 
-    def has_secondary_index(self, column: ColumnReference) -> bool:
-        if not ColumnReference.assert_bound(column):
-            raise UnboundColumnError(column)
+    def all_foreign_keys_on(self, table: TableReference | str) -> set[ForeignKeyRef]:
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
 
-        catalog_placeholder = "?" if column.table.catalog else "current_database()"
-        schema_placeholder = "?" if column.table.schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
-            SELECT ddbi.index_name
-            FROM duckdb_indexes() ddbi
-            WHERE lower(ddbi.table_name) = lower(?)
-                AND lower(ltrim(rtrim(ddbi.expressions, ']'), '[')) = lower(?)
-                AND lower(ddbi.database_name) = lower({catalog_placeholder})
-                AND lower(ddbi.schema_name) = lower({schema_placeholder})
-            """)
+        catalog_placeholder = "?" if table.catalog else "current_database()"
+        schema_placeholder = "?" if table.schema else "current_schema()"
 
-        params = [column.table.full_name, column.name]
-        if column.table.catalog:
-            params.append(column.table.catalog)
-        if column.table.schema:
-            params.append(column.table.schema)
-
-        cur = self._db.cursor()
-        cur.execute(query_template, parameters=params)
-        result_set = cur.fetchone()
-
-        return result_set is not None
-
-    def indexes_on(self, column: ColumnReference) -> set[str]:
-        if not ColumnReference.assert_bound(column):
-            raise UnboundColumnError(column)
-
-        catalog_placeholder = "?" if column.table.catalog else "current_database()"
-        schema_placeholder = "?" if column.table.schema else "current_schema()"
-
-        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
-        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
-        # is the column that is being referenced.
-        # Notice that this template is different from the vanilla template provided by the default implementation: in the
-        # first part, we query from duckdb_indexes() instead of information_schema.key_column_usage!
-
-        query_template = textwrap.dedent(f"""
-            SELECT ddbi.index_name
-            FROM duckdb_indexes() ddbi
-            WHERE lower(ddbi.table_name) = lower(?)
-                AND lower(ltrim(rtrim(ddbi.expressions, ']'), '[')) = lower(?)
-                AND lower(ddbi.database_name) = lower({catalog_placeholder})
-                AND lower(ddbi.schema_name) = lower({schema_placeholder})
-            UNION
-            SELECT tc.constraint_name
-            FROM information_schema.table_constraints tc
-                JOIN information_schema.constraint_column_usage ccu
-                    ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_name = ccu.table_name
-                    AND tc.table_schema = ccu.table_schema
-                    AND tc.table_catalog = ccu.table_catalog
-            WHERE tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
-                AND lower(ccu.table_name) = lower(?)
-                AND lower(ccu.column_name) = lower(?)
-                AND lower(ccu.table_catalog) = lower({catalog_placeholder})
-                AND lower(ccu.table_schema) = lower({schema_placeholder})
-            """)
-
-        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
-        # this solution is arguably better than relying on named parameters which might or might not be supported by the
-        # target database.
-        params = [column.table.full_name, column.name]
-        if column.table.catalog:
-            params.append(column.table.catalog)
-        if column.table.schema:
-            params.append(column.table.schema)
-        params *= 2  # repeat the parameters for the second part of the query
-
-        cur = self._db.cursor()
-        cur.execute(query_template, params)
-        result_set = cur.fetchall()
-        assert result_set is not None
-
-        return {row[0] for row in result_set}
-
-    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
-        if not ColumnReference.assert_bound(column):
-            raise UnboundColumnError(column)
-
-        catalog_placeholder = "?" if column.table.catalog else "current_database()"
-        schema_placeholder = "?" if column.table.schema else "current_schema()"
         query_template = f"""
-            SELECT referenced_table, referenced_column_names
-            FROM duckdb_constraints
-            WHERE lower(table_name) = lower(?)
-                AND apply(constraint_column_names, lambda c: lower(c)) = array_value(lower(?))
-                AND lower(database_name) = lower({catalog_placeholder})
-                AND lower(schema_name) = lower({schema_placeholder})
-                AND constraint_type = 'FOREIGN KEY';
-        """
+            SELECT constraint_name,
+                unnest(constraint_column_names) as fk_col,
+                referenced_table,
+                unnest(referenced_column_names) as ref_col
+            FROM duckdb_constraints()
+            WHERE table_name = ?
+                AND schema_name = {schema_placeholder}
+                AND database_name = {catalog_placeholder}
+                AND constraint_type = 'FOREIGN KEY'
+            """
 
-        params = [column.table.full_name, column.name]
-        if column.table.catalog:
-            params.append(column.table.catalog)
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+        if table.catalog:
+            params.append(table.catalog)
 
         cur = self._db.cursor()
         cur.execute(query_template, params)
         result_set = cur.fetchall()
         assert result_set is not None
 
-        foreign_keys: set[BoundColumnReference] = set()
-        for table_name, column_names in result_set:
-            if len(column_names) > 1:
-                warnings.warn(
-                    f"Column {column} is part of a multi-column foreign key constraint. "
-                    "This is currently not fully supported, only the first column will be returned.",
-                    stacklevel=2,
-                )
-            if not column_names:
-                warnings.warn(
-                    f"Column {column} is part of a foreign key constraint, but no referenced columns could be identified.",
-                    stacklevel=2,
-                )
-                continue
-            column_names = column_names[:1]
-            referenced_column = column_names[0]
-            table = TableReference(table_name, schema=column.table.schema)
-            column = BoundColumnReference(referenced_column, table)
-            foreign_keys.add(column)
+        fk_constraints: dict[str, list[BoundColumnReference]] = collections.defaultdict(list)
+        fk_targets: dict[str, list[BoundColumnReference]] = collections.defaultdict(list)
 
-        return foreign_keys
+        for row in result_set:
+            constraint, fk_col, target_table, target_col = row
+            fk_col_ref = ColumnReference(fk_col, table)
+            fk_constraints[constraint].append(fk_col_ref)
+
+            target_tab = self._as_tabref(target_table, catalog=table.catalog, schema=table.schema)
+            target_col_ref = ColumnReference(target_col, target_tab)
+            fk_targets[constraint].append(target_col_ref)
+
+        return {ForeignKeyRef(fk_cols, fk_targets[constraint]) for constraint, fk_cols in fk_constraints.items()}
+
+    def all_indexes_on(self, table: TableReference | str) -> Mapping[str, set[BoundColumnReference]]:
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
+
+        catalog_placeholder = "?" if table.catalog else "current_database()"
+        schema_placeholder = "?" if table.schema else "current_schema()"
+
+        query_template = f"""
+            SELECT constraint_name, unnest(constraint_column_names)
+            FROM duckdb_constraints()
+            WHERE table_name = ?
+                AND schema_name = {schema_placeholder}
+                AND database_name = {catalog_placeholder}
+                AND constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE')
+            UNION
+            SELECT index_name, unnest(expressions::varchar[])
+            FROM duckdb_indexes()
+            WHERE table_name = ?
+                AND schema_name = {schema_placeholder}
+                AND database_name = {catalog_placeholder}
+            """
+
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+        if table.catalog:
+            params.append(table.catalog)
+        params *= 2
+
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        index_cols: dict[str, set[BoundColumnReference]] = collections.defaultdict(set)
+        for constraint, col in result_set:
+            column = ColumnReference(col, table)
+            index_cols[constraint].add(column)
+        return index_cols
 
 
 class DuckDBStatistics(StatisticsCatalog):

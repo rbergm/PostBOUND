@@ -19,7 +19,6 @@ from __future__ import annotations
 import bisect
 import collections
 import itertools
-import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -512,39 +511,278 @@ class Database(ABC):
         return f"{self.database_name()} @ {self.dbms_name()} ({self.dbms_version()})"
 
 
-ForeignKeyRef = collections.namedtuple("ForeignKeyRef", ["fk_col", "referenced_col"])
-"""
-A foreign key references has a foreign key column `fk_col` (the first element) that requires a matching value in the
-`referenced_col` (the second element) of the target table.
-"""
+class PrimaryKeyRef(Sequence[BoundColumnReference]):
+    """Represents a primary key of a table.
+
+    The primary key can be composed of one or multiple columns. Their order does not matter from a logical perspective,
+    but is usually used to structure the physical index which typically backs the primary key.
+    Therefore, the order of the column is preserved in this representation. Use `pk_is` to check whether a (set of)
+    column(s) is equal to the primary key, regardless of the order of the columns.
+    """
+
+    def __init__(self, columns: Iterable[ColumnReference]) -> None:
+        columns = tuple(columns)
+        if not columns:
+            raise ValueError("Primary key columns cannot be empty.")
+        if not ColumnReference.all_bound(columns):
+            unbound = [col for col in columns if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected in primary key: {unbound}")
+        if len({col.table for col in columns}) > 1:
+            raise ValueError("Primary key columns must belong to the same table.")
+
+        self._columns = tuple(col.drop_table_alias() for col in columns)
+        self._table = columns[0].table.drop_alias()
+
+    @property
+    def columns(self) -> Sequence[BoundColumnReference]:
+        """The columns in the primary key."""
+        return self._columns
+
+    @property
+    def table(self) -> TableReference:
+        """The table that contains the primary key."""
+        return self._table
+
+    def pk_is(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        """Checks, whether a column is the primary key for its associated table.
+
+        The order of the columns does not matter.
+        """
+        column = {column} if isinstance(column, ColumnReference) else set(column)
+        return set(self._columns) == column
+
+    def is_simple(self) -> bool:
+        """Checks, whether the primary key consists of a single column."""
+        return len(self._columns) == 1
+
+    def simplify(self) -> BoundColumnReference:
+        """Gets the single column of the primary key, if it is simple."""
+        if not self.is_simple():
+            raise ValueError("Cannot simplify a composite primary key.")
+        return self._columns[0]
+
+    def __json__(self) -> jsondict:
+        return {"columns": self._columns}
+
+    def __len__(self) -> int:
+        return len(self._columns)
+
+    def __contains__(self, item: object) -> bool:
+        if not isinstance(item, ColumnReference):
+            return False
+        return item in self._columns
+
+    def __getitem__(self, index):
+        # let's not worry about type annotations for slices
+        return self._columns[index]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, PrimaryKeyRef):
+            return NotImplemented
+        return self._table == other._table and set(self._columns) == set(other._columns)
+
+    def __hash__(self) -> int:
+        return hash((frozenset(self._columns), self._table))
+
+    def __repr__(self) -> str:
+        cols_str = ", ".join(repr(col) for col in self._columns)
+        return f"PrimaryKeyRef(columns=[{cols_str}])"
+
+    def __str__(self) -> str:
+        cols = ", ".join(col.name for col in self._columns)
+        return f"PRIMARY KEY {self._table}({cols})"
 
 
-@dataclass
+class ForeignKeyRef:
+    """Represents a foreign key relationship between two tables.
+
+    The foreign key consists of a set of columns in the referencing table (`fk_cols`) that require a matching value
+    in a set of columns in the referenced table (`referenced_cols`).
+
+    The columns in `fk_cols` and `referenced_cols` need to be in the same order, such that the first column in `fk_cols`
+    corresponds to the first column in `referenced_cols`, and so on.
+
+    For example, consider the foreign key ``FOREIGN KEY R(a, b) REFERENCES S(c, d)``. Here, ``(a, b)`` are the `fk_cols`
+    and ``(c, d)`` are the `referenced_cols`.
+
+    To quickly compare foreign key relationships, the `fk_is` and `referenced_is` methods can be used to check whether
+    a specific column is part of the foreign key or referenced key. These functions are order-agnostic, meaning that the
+    order of the columns does not matter, only their presence/absence does.
+    """
+
+    def __init__(self, fk_cols: Iterable[ColumnReference], referenced_cols: Iterable[ColumnReference]) -> None:
+        fk_cols = tuple(fk_cols)
+        referenced_cols = tuple(referenced_cols)
+        if len(fk_cols) != len(referenced_cols):
+            raise ValueError("Foreign key columns and referenced columns must have the same length.")
+
+        if not fk_cols:
+            raise ValueError("Foreign key columns cannot be empty.")
+        if not ColumnReference.all_bound(fk_cols):
+            unbound = [col for col in fk_cols if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected in foreign key: {unbound}")
+        if len({col.table for col in fk_cols}) > 1:
+            raise ValueError("Foreign key columns must belong to the same table.")
+        self._fk_cols = tuple(col.drop_table_alias() for col in fk_cols)
+        self._fk_table = fk_cols[0].table.drop_alias()
+
+        if not referenced_cols:
+            raise ValueError("Referenced columns cannot be empty.")
+        if not ColumnReference.all_bound(referenced_cols):
+            unbound = [col for col in referenced_cols if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected in referenced key: {unbound}")
+        if len({col.table for col in referenced_cols}) > 1:
+            raise ValueError("Referenced columns must belong to the same table.")
+        self._referenced_cols = tuple(col.drop_table_alias() for col in referenced_cols)
+        self._referenced_table = referenced_cols[0].table.drop_alias()
+
+    @property
+    def fk_cols(self) -> Sequence[BoundColumnReference]:
+        """The columns in the foreign key."""
+        return self._fk_cols
+
+    @property
+    def fk_table(self) -> TableReference:
+        """The table that contains the foreign key."""
+        return self._fk_table
+
+    @property
+    def referenced_cols(self) -> Sequence[BoundColumnReference]:
+        """The columns in the referenced table."""
+        return self._referenced_cols
+
+    @property
+    def referenced_table(self) -> TableReference:
+        """The table that is referenced by the foreign key."""
+        return self._referenced_table
+
+    def fk_is(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        """Checks, whether a column is the foreign key for its associated table.
+
+        The order of the columns does not matter.
+        """
+
+        column = {column} if isinstance(column, ColumnReference) else set(column)
+        return set(self._fk_cols) == column
+
+    def referenced_is(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        """Checks, whether a column is the referenced column for its associated table.
+
+        The order of the columns does not matter.
+        """
+        column = {column} if isinstance(column, ColumnReference) else set(column)
+        return set(self._referenced_cols) == column
+
+    def mapping(self) -> Mapping[BoundColumnReference, BoundColumnReference]:
+        """Returns a mapping of foreign key columns to referenced columns.
+
+        The mapping is ordered according to the order of the foreign key columns. This means that the first column in
+        `fk_cols` corresponds to the first column in `referenced_cols`, and so on.
+        """
+        return dict(zip(self._fk_cols, self._referenced_cols, strict=True))
+
+    def is_simple(self) -> bool:
+        """Checks, whether the foreign key consists of a single column."""
+        return len(self._fk_cols) == 1
+
+    def simplify_fk_cols(self) -> BoundColumnReference:
+        """Gets the single column of the foreign key, if it is simple."""
+        if not self.is_simple():
+            raise ValueError("Cannot simplify a composite foreign key.")
+        return self._fk_cols[0]
+
+    def simplify_referenced_cols(self) -> BoundColumnReference:
+        """Gets the single referenced column of the foreign key, if it is simple."""
+        if not self.is_simple():
+            raise ValueError("Cannot simplify a composite foreign key.")
+        return self._referenced_cols[0]
+
+    def __json__(self) -> jsondict:
+        return {"foreign_key_columns": self._fk_cols, "referenced_columns": self._referenced_cols}
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ForeignKeyRef):
+            return NotImplemented
+
+        own_mapping = frozenset(zip(self._fk_cols, self._referenced_cols, strict=True))
+        other_mapping = frozenset(zip(other._fk_cols, other._referenced_cols, strict=True))
+        return own_mapping == other_mapping
+
+    def __hash__(self) -> int:
+        return hash(frozenset(zip(self._fk_cols, self._referenced_cols, strict=True)))
+
+    def __repr__(self) -> str:
+        fk_cols_str = ", ".join(repr(col) for col in self._fk_cols)
+        referenced_cols_str = ", ".join(repr(col) for col in self._referenced_cols)
+        return f"ForeignKeyRef(fk_cols=[{fk_cols_str}], referenced_cols=[{referenced_cols_str}])"
+
+    def __str__(self) -> str:
+        fk_cols = ", ".join(col.name for col in self._fk_cols)
+        referenced_cols = ", ".join(col.name for col in self._referenced_cols)
+        return f"FOREIGN KEY {self._fk_table}({fk_cols}) REFERENCES {self._referenced_table}({referenced_cols})"
+
+
+@dataclass(frozen=True)
 class ColumnInfo:
     """A compact representation of key properties of a specific column."""
 
     column: BoundColumnReference
+    """The column that this information is about."""
+
     table: TableReference
+    """The table that contains the column."""
 
     datatype: str
+    """The datatype of the column.
+
+    This is the raw, unnormalized datatype as reported by the database system.
+    """
+
     nullable: bool
+    """Whether the column can contain NULL values."""
+
     primary_key: bool
+    """Whether the column is the primary key of its table. For composite primary keys, this is False."""
+
     indexed: bool
+    """Whether there is an index on the column.
+
+    This does not account for composite indexes that include the column, but only for indexes that are defined on the
+    column itself.
+    """
+
+    unique: bool
+    """Whether values in the column are guaranteed to be unique.
+
+    Note that for composite UNIQUE constraints (including primary keys), this is False for all individual columns
+    in the constraint. In this case, the uniqueness is only guaranteed for the combination of all columns.
+    """
 
 
-@dataclass
-class TableInfo(Mapping[BoundColumnReference, ColumnInfo]):
+@dataclass(frozen=True)
+class TableInfo(Mapping[ColumnReference, ColumnInfo]):
     """A compact representation of key properties of a specific table.
 
     *TableInfo*  supports ``__getitem__`` access to retrieve the `ColumnInfo` for a specific column.
     """
 
     table: TableReference
-    columns: Sequence[ColumnInfo]
+    """The table that this information is about."""
 
-    primary_key: BoundColumnReference | None
+    columns: Sequence[ColumnInfo]
+    """The columns of the table, in the order they are defined in the table."""
+
+    primary_key: PrimaryKeyRef | None
+    """The primary key of the table, if it has one."""
+
     outgoing_foreign_keys: set[ForeignKeyRef]
+    """The foreign key references to other tables."""
+
     incoming_foreign_keys: set[ForeignKeyRef]
+    """The foreign key references from other tables to this table."""
+
+    indexes: Mapping[str, set[BoundColumnReference]]
+    """The indexes of the table, keyed by index name."""
 
     def __getitem__(self, key: ColumnReference | str) -> ColumnInfo:
         if isinstance(key, str):
@@ -570,12 +808,12 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
     method exists. Take a look at these methods to understand the functionality provided by the database schema
     interface.
 
-    The database schema can be iterated over to obtain all tables in the current database. Key-based access is supported as
-    follows: ``schema[table]`` provides a `TableInfo` that contains a summary of the tables structure (e.g. its columns,
-    primary key, foreign keys, etc.). Similarly, ``schema[column]`` provides a `ColumnInfo` with detailed information about
-    the column (e.g. its datatype, whether it is nullable, etc.). Generally speaking, you should pass a proper
-    `TableReference` or `ColumnReference`. It is also possible to pass just a string, but in this case the schema has to
-    guess whether you are referring to a table or a column.
+    The database schema can be iterated over to obtain all tables in the current database. Key-based access is supported
+    as follows: ``schema[table]`` provides a `TableInfo` that contains a summary of the tables structure (e.g. its
+    columns, primary key, foreign keys, etc.). Similarly, ``schema[column]`` provides a `ColumnInfo` with detailed
+    information about the column (e.g. its datatype, whether it is nullable, etc.). Generally speaking, you should pass
+    a proper `TableReference` or `ColumnReference`. It is also possible to pass just a string, but in this case the
+    schema has to guess whether you are referring to a table or a column.
 
     Parameters
     ----------
@@ -583,21 +821,24 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         The database for which the schema information should be read. This is required to obtain cursors that request
         the desired data.
     prep_placeholder : str, optional
-        The placeholder that is used for prepared statements. Some systems use `?` as a placeholder, while others use *%s*
-        (the default). This needs to be specified to ensure that the information_schema queries are correctly formatted.
+        The placeholder that is used for prepared statements. Some systems use `?` as a placeholder, while others use
+        *%s* (the default). This needs to be specified to ensure that the information_schema queries are correctly
+        formatted.
 
     Notes
     -----
-    **Hint for implementors:** the database schema contains no abstract methods that need to be overridden. All methods come
-    with a default implementation that uses the *information_schema* to retrieve the necessary information. However, if the
-    target database system does not support specific features of the information_schema, the corresponding methods need to be
-    overridden to provide the necessary functionality. The documentation of each method details which parts of the
-    information_schema it needs.
+    **Hint for implementors:** the database schema contains no abstract methods that need to be overridden. All methods
+    come with a default implementation that uses the *information_schema* to retrieve the necessary information.
+    However, if the target database system does not support specific features of the information_schema, the
+    corresponding methods need to be overridden to provide the necessary functionality. The documentation of each method
+    details which parts of the information_schema it needs.
     """
 
-    def __init__(self, db: Database, *, prep_placeholder: str = "%s"):
+    def __init__(self, db: Database, *, prep_placeholder: str, default_schema: str, default_catalog: str):
         self._db = db
         self._prep_placeholder = prep_placeholder
+        self._default_schema = default_schema
+        self._default_catalog = default_catalog
 
     def tables(
         self, *, catalog: str = "", schema: str = "", include_system_tables: bool = False
@@ -620,16 +861,17 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
 
         Notes
         -----
-        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables*
+        view.
         """
         catalog_placeholder = self._prep_placeholder if catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
+        query_template = f"""
             SELECT table_name
             FROM information_schema.tables
             WHERE lower(table_catalog) = lower({catalog_placeholder})
-                AND lower(table_schema) = lower({schema_placeholder})
-            """)
+                AND lower(table_schema) = lower({schema_placeholder});
+            """
 
         params = []
         if catalog:
@@ -642,7 +884,7 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         result_set = cur.fetchall()
         assert result_set is not None
 
-        return {TableReference(row[0], catalog=catalog, schema=schema) for row in result_set}
+        return {self._as_tabref(row[0], catalog=catalog, schema=schema) for row in result_set}
 
     def columns(self, table: TableReference | str) -> Sequence[BoundColumnReference]:
         """Fetches all columns of the given table.
@@ -658,14 +900,10 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
             All columns for the given table. Columns are ordered according to their position in the table.
             Will be empty if the table is not found or does not contain any columns.
 
-        Raises
-        ------
-        postbound.qal.VirtualTableError
-            If the given table is virtual (e.g. subquery or CTE)
-
         Notes
         -----
-        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns*
+        view.
         """
 
         # The documentation of lookup_column() reference an implementation detail of this method.
@@ -674,16 +912,19 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         table = table if isinstance(table, TableReference) else TableReference(table)
         if table.virtual:
             raise VirtualTableError(table)
+        table = table.drop_alias()
+
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
-        query_template = textwrap.dedent(f"""
+
+        query_template = f"""
             SELECT column_name
             FROM information_schema.columns
             WHERE lower(table_name) = lower({self._prep_placeholder})
                 AND lower(table_catalog) = lower({catalog_placeholder})
                 AND lower(table_schema) = lower({schema_placeholder})
-            ORDER BY ordinal_position
-            """)
+            ORDER BY ordinal_position;
+            """
 
         params = [table.full_name]
         if table.catalog:
@@ -711,14 +952,10 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         bool
             Whether the table is a view
 
-        Raises
-        ------
-        ValueError
-            If the table was not found in the current database
-
         Notes
         -----
-        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables*
+        view.
         """
         if isinstance(table, TableReference) and table.virtual:
             raise VirtualTableError(table)
@@ -726,13 +963,13 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
 
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
+        query_template = f"""
             SELECT table_type
             FROM information_schema.tables
             WHERE lower(table_name) = lower({self._prep_placeholder})
                 AND lower(table_catalog) = lower({catalog_placeholder})
-                AND lower(table_schema) = lower({schema_placeholder})
-            """)
+                AND lower(table_schema) = lower({schema_placeholder});
+            """
 
         params = [table.full_name]
         if table.catalog:
@@ -795,99 +1032,48 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
             raise ValueError(f"Column '{column}' not found in any of the candidate tables: {candidate_tables}")
         return None
 
-    def is_primary_key(self, column: ColumnReference) -> bool:
+    def is_primary_key(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
         """Checks, whether a column is the primary key for its associated table.
 
-        Parameters
-        ----------
-        column : ColumnReference
-            The column to check
-
-        Returns
-        -------
-        bool
-            Whether the column is the primary key of its table. If it is part of a compound primary key, this is *False*.
-
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        If multiple columns are provided, the method checks whether the given columns together form a composite
+        primary key for the table. In this case, key must consist exactly of the specified columns, but their order does
+        not matter.
 
         Notes
         -----
         **Hint for implementors:** the default implementation of this method relies on the
-        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
+        *information_schema.table_constraints*, *information_schema.constraint_column_usage*, and
+        *information_schema.key_column_usage* views.
         """
-        if (table := column.table) is None:
-            raise UnboundColumnError(column)
+        column = [column] if isinstance(column, ColumnReference) else list(column)
+        if not column:
+            raise ValueError("Cannot check primary key for empty column list.")
+        if not ColumnReference.all_bound(column):
+            unbound = [col for col in column if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected: {unbound}")
+
+        tables = {col.table for col in column}
+        if len(tables) > 1:
+            raise ValueError(f"Columns must belong to the same table. Got columns from tables: {tables}")
+        table = column[0].table
 
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
+        query_template = f"""
             SELECT ccu.column_name
             FROM information_schema.table_constraints tc
                 JOIN information_schema.constraint_column_usage ccu
-                ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_catalog = ccu.table_catalog
+                ON tc.table_catalog = ccu.table_catalog
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_name = ccu.table_name
                     AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE lower(tc.table_name) = lower({self._prep_placeholder})
-                AND lower(ccu.column_name) = lower({self._prep_placeholder})
-                AND lower(tc.table_catalog) = lower({catalog_placeholder})
-                AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type = 'PRIMARY KEY'
-            """)
-
-        params = [table.full_name, column.name]
-        if table.catalog:
-            params.append(table.catalog)
-        if table.schema:
-            params.append(table.schema)
-
-        cur = self._db.cursor()
-        cur.execute(query_template, params)
-        result_set = cur.fetchone()
-
-        return result_set is not None
-
-    def primary_key_column(self, table: TableReference | str) -> BoundColumnReference | None:
-        """Determines the primary key column of a specific table.
-
-        Parameters
-        ----------
-        table : TableReference | str
-            The table to check
-
-        Returns
-        -------
-        Optional[BoundColumnReference]
-            The primary key if it exists, or *None* otherwise.
-
-        Notes
-        -----
-        **Hint for implementors:** the default implementation of this method relies on the
-        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
-        """
-        table = table if isinstance(table, TableReference) else TableReference(table)
-        catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
-        schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
-            SELECT ccu.column_name
-            FROM information_schema.table_constraints tc
-                JOIN information_schema.constraint_column_usage ccu
-                ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_catalog = ccu.table_catalog
-                    AND tc.table_schema = ccu.table_schema
-                    AND tc.table_name = ccu.table_name
-                    AND tc.constraint_catalog = ccu.constraint_catalog
+                    AND tc.constraint_schema = ccu.constraint_schema
+                    AND tc.constraint_name = ccu.constraint_name
             WHERE lower(tc.table_name) = lower({self._prep_placeholder})
                 AND lower(tc.table_catalog) = lower({catalog_placeholder})
                 AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type = 'PRIMARY KEY'
-            """)
+                AND tc.constraint_type = 'PRIMARY KEY';
+            """
 
         params = [table.full_name]
         if table.catalog:
@@ -898,249 +1084,328 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         cur = self._db.cursor()
         cur.execute(query_template, params)
         result_set = cur.fetchall()
+        assert result_set is not None
 
-        if not result_set:
-            return None
-        elif len(result_set) > 1:
-            raise ValueError(f"Table {table} has multiple primary key columns: {result_set}")
-        col = result_set[0][0]
-        return BoundColumnReference(col, table)
+        pk_cols = {row[0] for row in result_set}
+        requested_cols = {col.name for col in column}
+        return pk_cols == requested_cols
 
-    def has_secondary_index(self, column: ColumnReference) -> bool:
-        """Checks, whether a secondary index is available for a specific column.
+    def primary_key_of(self, table: TableReference | str) -> PrimaryKeyRef | None:
+        """Determines the primary key of a specific table.
 
         Parameters
         ----------
-        column : ColumnReference
-            The column to check
+        table : TableReference | str
+            The table to check
 
         Returns
         -------
-        bool
-            Whether a secondary index of any kind was created for the column. Compound indexes and primary key indexes
-            fail this test.
-
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        PrimaryKeyRef | None
+            The primary key column(s) if they exist. The order of the column matches the order of the primary key
+            definition in the table. None is returned if the table has no primary key.
 
         Notes
         -----
-        **Hints for implementors:**
-        The default implementation of this method assumes that each foreign key column and each column with a UNIQUE constraint
-        has an associated index. If this should not be the case, a custom implementation needs to be supplied.
-        Furthermore, the implementation relies on the *information_schema.table_constraints*,
-        *information_schema.constraint_column_usage* and *information_schema.key_column_usage* views.
+        **Hint for implementors:** the default implementation of this method relies on the
+        *information_schema.table_constraints*, *information_schema.constraint_column_usage*, and
+        *information_schema.key_column_usage* views.
         """
-
-        # The documentation of has_index() references an implementation detail of this method.
-        # Make sure to keep the two in sync.
-
-        if (table := column.table) is None:
-            raise UnboundColumnError(column)
-
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-
-        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
-        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
-        # is the column that is being referenced.
-        query_template = textwrap.dedent(f"""
+        query_template = f"""
             SELECT ccu.column_name
             FROM information_schema.table_constraints tc
                 JOIN information_schema.constraint_column_usage ccu
-                ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_catalog = ccu.table_catalog
+                ON tc.table_catalog = ccu.table_catalog
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_name = ccu.table_name
                     AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE lower(tc.table_name) = lower({self._prep_placeholder})
-                AND lower(ccu.column_name) = lower({self._prep_placeholder})
-                AND lower(tc.table_catalog) = lower({catalog_placeholder})
-                AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type = 'UNIQUE'
-            UNION
-            SELECT kcu.column_name
-            FROM information_schema.table_constraints tc
+                    AND tc.constraint_schema = ccu.constraint_schema
+                    AND tc.constraint_name = ccu.constraint_name
                 JOIN information_schema.key_column_usage kcu
-                ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_catalog = kcu.table_catalog
+                ON tc.table_catalog = kcu.table_catalog
                     AND tc.table_schema = kcu.table_schema
                     AND tc.table_name = kcu.table_name
                     AND tc.constraint_catalog = kcu.constraint_catalog
+                    AND tc.constraint_schema = kcu.constraint_schema
+                    AND tc.constraint_name = kcu.constraint_name
+                    AND ccu.column_name = kcu.column_name
             WHERE lower(tc.table_name) = lower({self._prep_placeholder})
-                AND lower(kcu.column_name) = lower({self._prep_placeholder})
                 AND lower(tc.table_catalog) = lower({catalog_placeholder})
                 AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type = 'FOREIGN KEY'
-            """)
+                AND tc.constraint_type = 'PRIMARY KEY'
+            ORDER BY kcu.ordinal_position;
+            """
 
-        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
-        # this solution is arguably better than relying on named parameters which might or might not be supported by the
-        # target database.
-        params = [table.full_name, column.name]
+        params = [table.full_name]
         if table.catalog:
             params.append(table.catalog)
         if table.schema:
             params.append(table.schema)
-        params *= 2  # repeat the parameters for the second part of the query
-
-        cur = self._db.cursor()
-        cur.execute(query_template, params)
-        result_set = cur.fetchone()
-
-        return result_set is not None
-
-    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
-        """Fetches all foreign key constraints that are specified on a specific column.
-
-        The provided columns are the target columns that are referenced by the foreign key constraint. E.g., suppose there are
-        tables A and B with columns x and y. We specify a foreign key constraint on column y to ensure that all values in y
-        reference a value in x. Then, calling this method on column y will return column x. If there are multiple foreign key
-        constraints on the same column, all of them will be returned.
-
-        Parameters
-        ----------
-        column : ColumnReference
-            The column to check. All foreign keys that are "pointing from" this column to another column are returned.
-
-        Returns
-        -------
-        set[BoundColumnReference]
-            The columns that are "pointed to" by foreign key constraints on the given column. If no such foreign keys exist,
-            an empty set is returned.
-
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        if (table := column.table) is None:
-            raise UnboundColumnError(column)
-
-        catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
-        schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-        query_template = f"""
-            SELECT ccu.table_schema, ccu.table_name, ccu.column_name
-            FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                ON tc.table_name = kcu.table_name
-                    AND tc.table_catalog = kcu.table_catalog
-                    AND tc.table_schema = kcu.table_schema
-                    AND tc.constraint_catalog = kcu.constraint_catalog
-                    AND tc.constraint_schema = kcu.constraint_schema
-                    AND tc.constraint_name = kcu.constraint_name
-                JOIN information_schema.constraint_column_usage ccu
-                ON tc.constraint_catalog = ccu.constraint_catalog
-                    AND tc.constraint_schema = ccu.constraint_schema
-                    AND tc.constraint_name = ccu.constraint_name
-            WHERE lower(tc.table_name) = lower({self._prep_placeholder})
-                AND lower(kcu.column_name) = lower({self._prep_placeholder})
-                AND lower(tc.table_catalog) = lower({catalog_placeholder})
-                AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type = 'FOREIGN KEY'
-            """
-
-        params = [table.full_name, column.name]
-        if table.catalog:
-            params.append(table.catalog)
-        if table.schema:
-            params = [table.schema, *params]
 
         cur = self._db.cursor()
         cur.execute(query_template, params)
         result_set = cur.fetchall()
         assert result_set is not None
 
-        return {BoundColumnReference(row[1], TableReference(row[0], schema=table.schema)) for row in result_set}
+        if not result_set:
+            return None
 
-    def has_index(self, column: ColumnReference) -> bool:
-        """Checks, whether there is any index structure available on a column
+        cols = [ColumnReference(row[0], table) for row in result_set]
+        return PrimaryKeyRef(cols)
+
+    def has_secondary_index(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        """Checks, whether a secondary (i.e. non-primary key) index is available for a specific column.
+
+        If multiple columns are provided, the method checks whether a composite index exists for the given columns.
+        In this case, the order of the columns does not matter.
 
         Parameters
         ----------
-        column : ColumnReference
-            The column to check
+        column : ColumnReference | Iterable[ColumnReference]
+            The column(s) to check
 
         Returns
         -------
         bool
-            Whether any kind of index (primary, or secondary) is available for the column. Only compound indexes will
-            fail this test.
+            Whether a secondary index of any kind was created for the column. Primary key indexes fail this test. If
+            there are multiple indexes on the column(s) and one of the is the primary key index, this is also False.
 
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        Notes
+        -----
+        **Hints for implementors:**
+        The default implementation of this method assumes that each foreign key column and each column with a UNIQUE
+        constraint has an associated index. If this should not be the case, a custom implementation needs to be supplied.
+
+        If the DBMS allows for indexes that are not associated with a UNIQUE or FOREIGN KEY constraint, these must also
+        be handled separately.
+
+        Furthermore, the implementation relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage* and *information_schema.key_column_usage* views.
+        """
+        return not self.is_primary_key(column) and bool(self.indexes_on(column))
+
+    def foreign_keys_on(self, column: ColumnReference | Iterable[ColumnReference]) -> set[ForeignKeyRef]:
+        """Fetches all foreign key constraints that are specified on a specific column.
+
+        For a foreign key reference ``FOREIGN KEY R(a) REFERENCES S(c)``, `foreign_keys_on(R.a)` will return a
+        `ForeignKeyRef` that maps ``(R.a)`` to ``(S.c)``.
+
+        Parameters
+        ----------
+        column : ColumnReference | Iterable[ColumnReference]
+            The column(s) to check.
+
+        Returns
+        -------
+        set[ForeignKeyRef]
+            The foreign key constraints. If no FK constraints exist, the set will be empty.
+
+
+        See Also
+        --------
+        all_foreign_keys_on : Fetches all foreign key constraints that are specified on a specific table.
+
+        Notes
+        -----
+        **Hints for implementors:**
+        The default implementation of this method relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage*, *information_schema.key_column_usage*, and
+        *information_schema.columns* views.
+        """
+
+        column = [column] if isinstance(column, ColumnReference) else list(column)
+        if not column:
+            raise ValueError("Column list cannot be empty.")
+        if not ColumnReference.all_bound(column):
+            unbound = [col for col in column if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected: {unbound}")
+
+        tables = {col.table for col in column}
+        if len(tables) > 1:
+            raise ValueError(f"Columns must belong to the same table. Got columns from tables: {tables}")
+        table = column[0].table
+
+        all_fkeys = self.all_foreign_keys_on(table)
+        requested_cols = {col.drop_table_alias() for col in column}
+        return {fk for fk in all_fkeys if fk.fk_is(requested_cols)}
+
+    def all_foreign_keys_on(self, table: TableReference | str) -> set[ForeignKeyRef]:
+        """Fetches all foreign key constraints that are specified on a specific table.
+
+
+        See Also
+        --------
+        foreign_keys_on : Fetches all foreign key constraints that are specified on a specific column(s).
+
+        Notes
+        -----
+        **Hints for implementors:**
+        The default implementation of this method relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage*, *information_schema.key_column_usage*, and
+        *information_schema.columns* views.
+        """
+
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
+
+        catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
+        schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
+        query_template = f"""
+            SELECT kcu.constraint_name,
+                kcu.column_name,
+                ref.table_catalog,
+                ref.table_schema,
+                ref.table_name,
+                ref.column_name
+            FROM information_schema.table_constraints tc                   -- the FK constraint
+                JOIN information_schema.key_column_usage kcu               -- its (referencing) columns
+                ON tc.constraint_catalog = kcu.constraint_catalog
+                    AND tc.constraint_schema = kcu.constraint_schema
+                    AND tc.constraint_name = kcu.constraint_name
+                    AND tc.table_catalog = kcu.table_catalog
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                JOIN information_schema.referential_constraints rc         -- FK -> referenced PK/UNIQUE constraint
+                ON tc.constraint_catalog = rc.constraint_catalog
+                    AND tc.constraint_schema = rc.constraint_schema
+                    AND tc.constraint_name = rc.constraint_name
+                JOIN information_schema.key_column_usage ref               -- columns of the referenced constraint
+                ON rc.unique_constraint_catalog = ref.constraint_catalog
+                    AND rc.unique_constraint_schema = ref.constraint_schema
+                    AND rc.unique_constraint_name = ref.constraint_name
+                    AND kcu.position_in_unique_constraint = ref.ordinal_position
+            WHERE lower(tc.table_name) = lower({self._prep_placeholder})
+                AND lower(tc.table_schema) = lower({schema_placeholder})
+                AND lower(tc.table_catalog) = lower({catalog_placeholder})
+                AND tc.constraint_type = 'FOREIGN KEY'
+            ORDER BY kcu.constraint_name, kcu.ordinal_position;
+            """
+
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+        if table.catalog:
+            params.append(table.catalog)
+
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        fk_constraints: dict[str, list[BoundColumnReference]] = collections.defaultdict(list)
+        fk_targets: dict[str, list[BoundColumnReference]] = collections.defaultdict(list)
+
+        for row in result_set:
+            constraint, fk_col, target_ct, target_schema, target_table, target_col = row
+            fk_col_ref = ColumnReference(fk_col, table)
+            fk_constraints[constraint].append(fk_col_ref)
+
+            target_tab = self._as_tabref(target_table, catalog=target_ct, schema=target_schema)
+            target_col_ref = ColumnReference(target_col, target_tab)
+            fk_targets[constraint].append(target_col_ref)
+
+        return {ForeignKeyRef(fk_cols, fk_targets[constraint]) for constraint, fk_cols in fk_constraints.items()}
+
+    def has_index(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        """Checks, whether there is any index structure available on a column
+
+        Parameters
+        ----------
+        column : ColumnReference | Iterable[ColumnReference]
+            The column(s) to check
+
+        Returns
+        -------
+        bool
+            Whether any kind of index (primary, or secondary) is available for the column(s). If multiple columns are
+            provided, a matching composite index must exist. The order of the columns does not matter.
 
         Notes
         -----
         **Hints for implementors:** the default implementation of this method (transitively) relies on the
-        **information_schema.table_constraints** and **information_schema.constraint_column_usage** views. It assumes that
-        primary keys, foreign keys and unique constraints are all associated with an index structure. If this is not the case,
-        a custom implementation needs to be supplied.
+        **information_schema.table_constraints** and **information_schema.constraint_column_usage** views. It assumes
+        that primary keys, foreign keys and unique constraints are all associated with an index structure. If this is
+        not the case, a custom implementation needs to be supplied.
         """
         return self.is_primary_key(column) or self.has_secondary_index(column)
 
-    def indexes_on(self, column: ColumnReference) -> set[str]:
+    def indexes_on(self, column: ColumnReference | Iterable[ColumnReference]) -> set[str]:
         """Retrieves the names of all indexes of a specific column.
 
         Parameters
         ----------
-        column : ColumnReference
-            The column to check.
+        column : ColumnReference | Iterable[ColumnReference]
+            The column(s) to check. If multiple columns are provided, the method checks for composite indexes that
+            include exactly the specified columns. The order of the columns does not matter.
 
         Returns
         -------
         set[str]
             The indexes. If no indexes are available, the set will be empty.
 
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        See Also
+        --------
+        all_indexes_on : Retrieves all indexes of a specific table.
 
         Notes
         -----
-        **Hints for implementors:** the default implementation of this method assumes that primary keys, foreign keys and
-        unique constraints are all associated with an index structure. It provides the names of the corresponding constraints.
-        The implementation relies on the *information_schema.table_constraints*, *information_schema.constraint_column_usage*
-        and *information_schema.key_column_usage* views.
+        **Hints for implementors:** the default implementation of this method assumes that primary keys, foreign keys
+        and unique constraints are all associated with an index structure. Further, it assumes that there are no
+        indexes that are not associated with any of the above constraint types.
+        The implementation relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage* and *information_schema.key_column_usage* views.
         """
-        if (table := column.table) is None:
-            raise UnboundColumnError(column)
+        column = [column] if isinstance(column, ColumnReference) else list(column)
+        if not column:
+            raise ValueError("Column list cannot be empty.")
+        if not ColumnReference.all_bound(column):
+            unbound = [col for col in column if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected: {unbound}")
+
+        tables = {col.table for col in column}
+        if len(tables) > 1:
+            raise ValueError(f"Columns must belong to the same table. Got columns from tables: {tables}")
+        table = column[0].table
+
+        index_cols = self.all_indexes_on(table)
+        requested_cols = {col.drop_table_alias() for col in column}
+        return {index_name for index_name, cols in index_cols.items() if cols == requested_cols}
+
+    def all_indexes_on(self, table: TableReference | str) -> Mapping[str, set[BoundColumnReference]]:
+        """Retrieves all indexes of a specific table.
+
+        Parameters
+        ----------
+        table : TableReference | str
+            The table to check
+
+        Returns
+        -------
+        Mapping[str, set[BoundColumnReference]]
+            A mapping from the index name to the columns that are indexed. If no indexes are available, the mapping wil
+            be empty.
+
+        See Also
+        --------
+        indexes_on : Retrieves the names of all indexes of a specific column.
+
+        Notes
+        -----
+        **Hints for implementors:** the default implementation of this method assumes that primary keys, foreign keys
+        and unique constraints are all associated with an index structure. Further, it assumes that there are no
+        indexes that are not associated with any of the above constraint types.
+        The implementation relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage* and *information_schema.key_column_usage* views.
+        """
+
+        table = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
 
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
 
-        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
-        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
-        # is the column that is being referenced.
-        query_template = textwrap.dedent(f"""
-            SELECT tc.constraint_name
-            FROM information_schema.table_constraints tc
-                JOIN information_schema.constraint_column_usage ccu
-                ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_catalog = ccu.table_catalog
-                    AND tc.table_schema = ccu.table_schema
-                    AND tc.table_name = ccu.table_name
-                    AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE lower(tc.table_name) = lower({self._prep_placeholder})
-                AND lower(ccu.column_name) = lower({self._prep_placeholder})
-                AND lower(tc.table_catalog) = lower({catalog_placeholder})
-                AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
-            UNION
-            SELECT tc.constraint_name
+        query_template = f"""
+            SELECT tc.constraint_name, kcu.column_name
             FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
                 ON tc.constraint_name = kcu.constraint_name
@@ -1149,28 +1414,27 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
                     AND tc.table_name = kcu.table_name
                     AND tc.constraint_catalog = kcu.constraint_catalog
             WHERE lower(tc.table_name) = lower({self._prep_placeholder})
-                AND lower(kcu.column_name) = lower({self._prep_placeholder})
                 AND lower(tc.table_catalog) = lower({catalog_placeholder})
                 AND lower(tc.table_schema) = lower({schema_placeholder})
-                AND tc.constraint_type = 'FOREIGN KEY'
-            """)
+                AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE')
+            """
 
-        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
-        # this solution is arguably better than relying on named parameters which might or might not be supported by the
-        # target database.
-        params = [table.full_name, column.name]
+        params = [table.full_name]
         if table.catalog:
             params.append(table.catalog)
         if table.schema:
             params.append(table.schema)
-        params *= 2  # repeat the parameters for the second part of the query
 
         cur = self._db.cursor()
         cur.execute(query_template, params)
         result_set = cur.fetchall()
         assert result_set is not None
 
-        return {row[0] for row in result_set}
+        index_cols: dict[str, set[BoundColumnReference]] = collections.defaultdict(set)
+        for constraint, col in result_set:
+            column = ColumnReference(col, table)
+            index_cols[constraint].add(column)
+        return index_cols
 
     def datatype(self, column: ColumnReference, *, raw: bool = False) -> str:
         """Retrieves the (physical) data type of a column.
@@ -1181,7 +1445,7 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         Parameters
         ----------
         column : ColumnReference
-            The colum to check
+            The column to check
         raw : bool, optional
             If enabled, the type will be returned as-is. Otherwise, it will be lower-cased.
             By default, lower-casing is enabled.
@@ -1191,30 +1455,24 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         str
             The datatype. Will never be empty. The type will automatically be lower-cased unless `raw` is set.
 
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-
         Notes
         -----
-        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns*
+        view.
         """
         if (table := column.table) is None:
             raise UnboundColumnError(column)
 
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
+        query_template = f"""
             SELECT data_type
             FROM information_schema.columns
             WHERE lower(table_name) = lower({self._prep_placeholder})
                 AND lower(column_name) = lower({self._prep_placeholder})
                 AND lower(table_catalog) = lower({catalog_placeholder})
                 AND lower(table_schema) = lower({schema_placeholder});
-            """)
+            """
 
         params = [table.full_name, column.name]
         if table.catalog:
@@ -1262,30 +1520,24 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         bool
             Whether the column may contain NULL values
 
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-
         Notes
         -----
-        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns*
+        view.
         """
         if (table := column.table) is None:
             raise UnboundColumnError(column)
 
         catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
         schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
-        query_template = textwrap.dedent(f"""
+        query_template = f"""
             SELECT is_nullable
             FROM information_schema.columns
             WHERE lower(table_name) = lower({self._prep_placeholder})
                 AND lower(column_name) = lower({self._prep_placeholder})
                 AND lower(table_catalog) = lower({catalog_placeholder})
                 AND lower(table_schema) = lower({schema_placeholder});
-            """)
+            """
 
         params = [table.full_name, column.name]
         if table.catalog:
@@ -1300,50 +1552,118 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
 
         return result_set[0] == "YES"
 
+    def is_unique(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        """Checks whether there is a UNIQUE constraint on a specific column.
+
+        If multiple columns are provided, the method checks whether a composite UNIQUE constraint exists for the given
+        columns, even if uniqueness could be guaranteed as soon as one of the columns has a UNIQUE constraint on its
+        own. For composite constraints, the order of the columns does not matter.
+
+        Parameters
+        ----------
+        column : ColumnReference | Iterable[ColumnReference]
+            The column(s) to check
+
+        Returns
+        -------
+        bool
+            Whether a UNIQUE constraint exists for the column(s)
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the
+        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
+        """
+        column = [column] if isinstance(column, ColumnReference) else list(column)
+        if not column:
+            raise ValueError("Column list cannot be empty.")
+        if not ColumnReference.all_bound(column):
+            unbound = [col for col in column if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected: {unbound}")
+
+        tables = {col.table for col in column}
+        if len(tables) > 1:
+            raise ValueError(f"Columns must belong to the same table. Got columns from tables: {tables}")
+        table = column[0].table
+
+        catalog_placeholder = self._prep_placeholder if table.catalog else "current_database()"
+        schema_placeholder = self._prep_placeholder if table.schema else "current_schema()"
+
+        query_template = f"""
+            SELECT tc.constraint_name, ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+                    AND tc.constraint_schema = ccu.constraint_schema
+                    AND tc.constraint_name = ccu.constraint_name
+            WHERE lower(tc.table_name) = lower({self._prep_placeholder})
+                AND lower(tc.table_catalog) = lower({catalog_placeholder})
+                AND lower(tc.table_schema) = lower({schema_placeholder})
+                AND tc.constraint_type = 'UNIQUE';
+            """
+
+        params = [table.full_name]
+        if table.catalog:
+            params.append(table.catalog)
+        if table.schema:
+            params.append(table.schema)
+
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        unique_constraints: dict[str, set[str]] = collections.defaultdict(set)
+        for constraint, col in result_set:
+            unique_constraints[constraint].add(col)
+
+        target_cols = {col.name for col in column}
+        return any(target_cols == cols for cols in unique_constraints.values())
+
     def as_graph(self) -> nx.DiGraph:
         """Constructs a compact representation of the database schema.
 
         The schema is expressed as a directed graph. Each table is represented as a node. Nodes contain the following
         attributes:
+
         - `columns`: a list of all columns in the table
         - `data_type`: a dictionary mapping each column to its data type
-        - `primary_key`: the primary key of the table (if it exists, otherwise *None*)
+        - `primary_key`: the primary key of the table as a `PrimaryKeyRef` (if it exists, otherwise *None*)
+        - `foreign_keys`: a list of all foreign key constraints on the table (as `ForeignKeyRef` objects)
 
-        In addition, edges are used to model foreign key constraints. Each edge points from the table that contains the foreign
-        key (column *y* in the example in `foreign_keys_on`) to the table that is referenced by the foreign key (*x* in the
-        example in `foreign_keys_on`). Edges contain an attribute `foreign_keys` with a list of the foreign key
-        relationships. Each such constraint is described by a `ForeignKeyRef`.
+        In addition, edges are used to model foreign key constraints.
+        For a foreign key ``FOREIGN KEY R(a) REFERENCES S(c)``, an edge is created pointing from *R* to the *S*.
+        Edges contain an attribute `foreign_keys` with a list of the foreign key relationships. Each such constraint is
+        described by a `ForeignKeyRef`.
         """
         g = nx.DiGraph()
-        all_columns: set[BoundColumnReference] = set()
 
-        for table in self.tables():
+        for table in self.tables(include_system_tables=False):
             if self.is_view(table):
                 continue
 
             cols = self.columns(table)
             dtypes = {col: self.datatype(col) for col in cols}
-            pkey = self.primary_key_column(table)
+            pkey = self.primary_key_of(table)
             g.add_node(table, columns=cols, data_type=dtypes, primary_key=pkey)
 
-            all_columns |= set(cols)
-
-        for col in all_columns:
-            foreign_keys = self.foreign_keys_on(col)
-            for fk_target in foreign_keys:
-                fk_constraint = ForeignKeyRef(col, fk_target)
-                current_edge = g.edges.get([col.table, fk_target.table])
+            foreign_keys = self.all_foreign_keys_on(table)
+            for fk_ref in foreign_keys:
+                current_edge = g.edges.get([fk_ref.fk_table, fk_ref.referenced_table])
 
                 if current_edge:
-                    current_edge["foreign_keys"].append(fk_constraint)
+                    current_edge["foreign_keys"].append(fk_ref)
                 else:
-                    g.add_edge(col.table, fk_target.table, foreign_keys=[fk_constraint])
+                    g.add_edge(fk_ref.fk_table, fk_ref.referenced_table, foreign_keys=[fk_ref])
 
         return g
 
     def join_equivalence_keys(
         self,
-    ) -> dict[BoundColumnReference, set[BoundColumnReference]]:
+    ) -> Mapping[BoundColumnReference, set[BoundColumnReference]]:
         """Calculates the equivalence classes of joinable columns in the database schema.
 
         Two columns are considered joinable, if they are linked by a foreign key constraint.
@@ -1351,6 +1671,9 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         Then, the columns R.a, S.b and T.c are all joinable and form an equivalence class.
         Likewise, the constraints R.a -> T.c and S.b -> T.c would establish the same equivalence class.
         On the other hand, the constraints R.a -> S.b and S.c -> T.d create two different equivalence classes.
+
+        Note that this method does not consider composite foreign keys, because it is not clear how those should be
+        represented (as they always require at least two join predicates to be present).
 
         Returns
         -------
@@ -1361,7 +1684,11 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         columns = util.flatten(self.columns(table) for table in self.tables())
         g = nx.Graph()
         for col in columns:
-            edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
+            edges = [
+                (col, fk_target.simplify_referenced_cols())
+                for fk_target in self.foreign_keys_on(col)
+                if fk_target.is_simple()
+            ]
             g.add_edges_from(edges)
 
         eq_keys: dict[BoundColumnReference, set[BoundColumnReference]] = {}
@@ -1377,6 +1704,9 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         This method is similar to `join_equivalence_keys`, but returns the different equivalence classes instead of a
         mapping. See its documentation for more details.
 
+        Note that this method does not consider composite foreign keys, because it is not clear how those should be
+        represented (as they always require at least two join predicates to be present).
+
         See Also
         --------
         join_equivalence_keys
@@ -1384,9 +1714,19 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
         columns = util.flatten(self.columns(table) for table in self.tables())
         g = nx.Graph()
         for col in columns:
-            edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
+            edges = [
+                (col, fk_target.simplify_referenced_cols())
+                for fk_target in self.foreign_keys_on(col)
+                if fk_target.is_simple()
+            ]
             g.add_edges_from(edges)
         return list(nx.connected_components(g))
+
+    def _as_tabref(self, name: str, *, catalog: str, schema: str) -> TableReference:
+        """Creates a TableReference object, but omits the catalog and schema if they are equal to the default values."""
+        catalog = catalog if catalog and catalog != self._default_catalog else ""
+        schema = schema if schema and schema != self._default_schema else ""
+        return TableReference(name, schema=schema, catalog=catalog)
 
     @overload
     def __getitem__(self, key: TableReference) -> TableInfo: ...
@@ -1401,24 +1741,28 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
                 return ColumnInfo(
                     column=key,
                     table=key.table,
+                    primary_key=self.is_primary_key(key),
                     datatype=self.datatype(key),
                     nullable=self.is_nullable(key),
+                    unique=self.is_unique(key),
                     indexed=self.has_index(key),
-                    primary_key=self.is_primary_key(key),
                 )
             case TableReference():
                 key = key.drop_alias()
-
                 schema_graph = self.as_graph()
+                if key not in schema_graph:
+                    raise KeyError(f"Table '{key}' not found in database schema")
+
                 col_infos = [self[col] for col in self.columns(key)]
                 outgoing_fks = set_union(edge[2] for edge in schema_graph.out_edges(key, data="foreign_keys"))
                 incoming_fks = set_union(edge[2] for edge in schema_graph.in_edges(key, data="foreign_keys"))
                 return TableInfo(
                     table=key,
                     columns=col_infos,
-                    primary_key=self.primary_key_column(key),
+                    primary_key=self.primary_key_of(key),
                     outgoing_foreign_keys=outgoing_fks,
                     incoming_foreign_keys=incoming_fks,
+                    indexes=self.all_indexes_on(key),
                 )
             case str():
                 try:
@@ -1428,8 +1772,12 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
                     pass
 
                 try:
-                    col, tab = key.split(".", 1)
-                    ref = ColumnReference(col, TableReference(tab))
+                    components = key.split(".")
+                    if len(components) < 2:
+                        raise KeyError(f"Key '{key}' not found in database schema")
+                    tab = components[:-1]
+                    col = components[-1]
+                    ref = ColumnReference(col, TableReference.from_components(tab))
                     return self[ref]
                 except KeyError:
                     raise KeyError(f"Key '{key}' not found in database schema") from None
@@ -1438,6 +1786,35 @@ class DatabaseSchema(ABC, Mapping[TableReference, TableInfo]):
                     f"Unsupported key type: {type(key).__name__}. "
                     "Only TableReference, ColumnReference, or str are supported."
                 )
+
+    def __contains__(self, item: object) -> bool:
+        match item:
+            case TableReference():
+                return item.drop_alias() in self.tables()
+
+            case ColumnReference() if ColumnReference.assert_bound(item):
+                return item.drop_table_alias() in self.columns(item.table)
+
+            case str():
+                components = item.split(".")
+                if len(components) > 4:
+                    return False
+
+                if len(components) < 4:
+                    table = TableReference.from_components(components)
+                    if table in self.tables():
+                        return True
+                    if len(components) == 1:
+                        # cannot be table + column and table was not found
+                        return False
+
+                table_components = components[:-1]
+                column_name = components[-1]
+                column = ColumnReference(column_name, TableReference.from_components(table_components))
+                return column in self.columns(column.table)
+
+            case _:
+                return False
 
     def __iter__(self) -> Iterator[TableReference]:
         return iter(self.tables())
