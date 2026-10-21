@@ -4660,7 +4660,7 @@ class PredicateTree:
         self._joins = _collect_join_predicates(self._root)
         return self._joins
 
-    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> JoinGraph:
         """Provides the join graph for the predicates.
 
         A join graph is an undirected graph, where each node corresponds to a base table and each edge corresponds to a
@@ -8170,6 +8170,19 @@ class ClauseVisitor(ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
 
+JoinGraph = nx.Graph
+"""Simple representation of the join graph of a query.
+
+A join graph is an undirected graph, where each node corresponds to a base table and each edge corresponds to a
+join predicate between two base tables. In addition, each node is annotated by a ``predicate`` key which is a
+conjunction of all filter predicates on that table (or *None* if the table is unfiltered). Likewise, each edge is
+annotated by a ``predicate`` key that corresponds to the join predicate (which can never be *None*).
+
+This is just an alias for a `networkx.Graph` object. We use it to convey that the graph has our join graph structure and
+to ship the docstring to wherever the graph is needed.
+"""
+
+
 class SqlQuery(ABC):
     """The SQL query represents a *SELECT* query to retrieve data from a database system.
 
@@ -8516,7 +8529,7 @@ class SqlQuery(ABC):
         return pred_tree.joins()
 
     @abstractmethod
-    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> JoinGraph:
         """Generates the join graph of a query.
 
         In contrast to calling `predicates().join_graph()`, this method will always return a graph, even if no join
@@ -9326,18 +9339,23 @@ class SelectStatement(SqlQuery):
 
         return self.tables() - self.bound_tables() - virtual_subquery_targets - virtual_cte_targets
 
-    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> JoinGraph:
         if self._from_clause is None:
             return nx.Graph()
 
         predicate_tree = self.predicates()
-        g = nx.Graph() if predicate_tree is None else predicate_tree.join_graph(merge_aliases=merge_aliases)
+        if predicate_tree is not None:
+            return predicate_tree.join_graph(merge_aliases=merge_aliases)
+
+        g = nx.Graph()
 
         source_tables = set(self._from_clause.bound_tables())
         if merge_aliases:
             source_tables = {table.drop_alias() for table in source_tables}
 
-        g.add_nodes_from(source_tables)
+        for tab in source_tables:
+            g.add_node(tab, predicate=None)
+
         return g
 
     def __hash__(self) -> int:
