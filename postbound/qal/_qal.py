@@ -4425,8 +4425,11 @@ class SimpleJoin(AbstractPredicate):
         else:
             raise TypeError("Unexpected join partner type: " + str(type(other)))
 
-    def column_of(self, table: TableReference) -> ColumnReference | None:
-        """Provides the join column of the given table."""
+    def key_of(self, table: TableReference) -> ColumnReference | None:
+        """Provides the join column of the given table.
+
+        If the table is not joined, *None* is returned.
+        """
         if self.lhs.belongs_to(table):
             return self.lhs
         if self.rhs.belongs_to(table):

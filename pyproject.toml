@@ -4,38 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PostBOUND"
-version = "0.23.0"
+version = "0.23.0.dev0"
 authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is a research framework to prototype and benchmark database query optimizers"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "Intended Audience :: Science/Research",
-    "Topic :: Database :: Database Engines/Servers",
-    "Topic :: Scientific/Engineering",
-    "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Intended Audience :: Science/Research",
+  "Topic :: Database :: Database Engines/Servers",
+  "Topic :: Scientific/Engineering",
+  "Operating System :: OS Independent",
 ]
 dependencies = [
-    "lazy-loader~=0.4",
-    "levenshtein~=0.27",
-    "natsort~=8.4",
-    "networkx~=3.5",
-    "numpy~=2.3",
-    "pandas~=2.3",
-    "pglast~=7.10",
-    "psycopg[binary]~=3.2",
-    "quacklab~=1.5",
-    "tqdm~=4.67",
+  "lazy-loader~=0.4",
+  "levenshtein~=0.27",
+  "natsort~=8.4",
+  "networkx~=3.5",
+  "numpy~=2.3",
+  "pandas~=2.3",
+  "pglast~=7.10",
+  "psycopg[binary]~=3.2",
+  "quacklab~=1.5",
+  "tqdm~=4.67",
 ]
 
 [project.optional-dependencies]
-vis = [
-    "matplotlib~=3.10",
-    "seaborn~=0.13",
-    "graphviz~=0.21",
-]
+vis = ["matplotlib~=3.10", "seaborn~=0.13", "graphviz~=0.21"]
 
 
 [project.urls]
@@ -46,23 +42,23 @@ vis = [
 # ruff and ty are pinned exactly: ruff's default rule set changes between minor releases and ty is
 # still pre-1.0, so an unpinned tool would report different results on different machines.
 dev = [
-    # Pull in every optional backend: without them ty cannot resolve the imports in vis/,
-    # so type-check results would depend on which extras a developer happened to sync.
-    "postbound[vis]",
-    "ipython>=9.8.0",
-    "jupyterlab>=4.6.1",
-    "pre-commit>=4.4",
-    "pyarrow>=23.0.0",
-    # pytest is the test runner. Existing unittest.TestCase classes are collected unchanged;
-    # new tests are written as plain functions so they can use fixtures and parametrization.
-    # timeout stops a hung test from blocking a push.
-    "pytest>=8.4",
-    "pytest-timeout>=2.4",
-    "ruff==0.16.6",
-    "sphinx>=9.1.0",
-    "sphinx-book-theme>=1.1.4",
-    "tables==3.11.1",
-    "ty==0.0.78",
+  # Pull in every optional backend: without them ty cannot resolve the imports in vis/,
+  # so type-check results would depend on which extras a developer happened to sync.
+  "postbound[vis]",
+  "ipython>=9.8.0",
+  "jupyterlab>=4.6.1",
+  "pre-commit>=4.4",
+  "pyarrow>=23.0.0",
+  # pytest is the test runner. Existing unittest.TestCase classes are collected unchanged;
+  # new tests are written as plain functions so they can use fixtures and parametrization.
+  # timeout stops a hung test from blocking a push.
+  "pytest>=8.4",
+  "pytest-timeout>=2.4",
+  "ruff==0.16.6",
+  "sphinx>=9.1.0",
+  "sphinx-book-theme>=1.1.4",
+  "tables==3.11.1",
+  "ty==0.0.78",
 ]
 
 [tool.uv]
@@ -80,9 +76,9 @@ testpaths = ["tests"]
 # `uv run pytest --tier 2`. See tests/conftest.py for the tier definitions.
 addopts = "--strict-markers"
 markers = [
-    "embedded: tier 1 -- needs an embedded engine (DuckDB in-memory) or a recorded transcript, but no server",
-    "live_db: tier 2 -- needs a live database server plus the synthetic test schema",
-    "slow: tier 3 -- full workload sweeps, real timeouts, prewarming; minutes to hours",
+  "embedded: tier 1 -- needs an embedded engine (DuckDB in-memory) or a recorded transcript, but no server",
+  "live_db: tier 2 -- needs a live database server plus the synthetic test schema",
+  "slow: tier 3 -- full workload sweeps, real timeouts, prewarming; minutes to hours",
 ]
 # No single tier-0 test should ever come close to this. It exists so that a deadlock in the
 # multiprocessing-based timeout code fails the run instead of hanging a developer's push.
@@ -96,12 +92,12 @@ extend-exclude = ["docs/build", "docs/source/generated"]
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
 ignore = [
-    "E501",    # line length is enforced by the formatter; long docstring prose is not rewrapped
-    "UP046",   # PEP 695 generic classes: genuine refactors, tracked separately
-    "UP047",   # PEP 695 generic functions: ditto
-    "RUF001",  # ambiguous unicode in strings: intentional in the operator/plan symbols
-    "RUF002",  # ambiguous unicode in docstrings: intentional in the research prose
-    "SIM108",  # if/else -> ternary: hurts readability for the multi-branch cases here
+  "E501",   # line length is enforced by the formatter; long docstring prose is not rewrapped
+  "UP046",  # PEP 695 generic classes: genuine refactors, tracked separately
+  "UP047",  # PEP 695 generic functions: ditto
+  "RUF001", # ambiguous unicode in strings: intentional in the operator/plan symbols
+  "RUF002", # ambiguous unicode in docstrings: intentional in the research prose
+  "SIM108", # if/else -> ternary: hurts readability for the multi-branch cases here
 ]
 
 [tool.ruff.lint.isort]
@@ -111,17 +107,14 @@ known-first-party = ["postbound"]
 # These factories all return immutable value objects, so sharing one instance across all calls
 # (which is what a default argument does) is safe and intentional.
 extend-immutable-calls = [
-    "postbound._core.Cardinality.unknown",
-    "postbound.qal._qal.Explain.plan",
-    "postbound.qal.Explain.plan",
-    "postbound.qal._qal.StarExpression",
+  "postbound._core.Cardinality.unknown",
+  "postbound.qal._qal.Explain.plan",
+  "postbound.qal.Explain.plan",
+  "postbound.qal._qal.StarExpression",
 ]
 
 [tool.ty.src]
-exclude = [
-    "vol-postbound/**",
-    "**/*.ipynb",
-]
+exclude = ["vol-postbound/**", "**/*.ipynb"]
 
 # The overrides below silence rule families in specific files rather than excluding the files.
 # `unresolved-import` and `unresolved-attribute` are deliberately left enforced everywhere,
