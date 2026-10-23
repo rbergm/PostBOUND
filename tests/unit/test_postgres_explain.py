@@ -448,8 +448,8 @@ def test_missing_fields_use_documented_defaults() -> None:
     assert math.isnan(node.execution_time)
     assert node.loops == 1
     assert node.relation_name is None
-    assert node.launched_workers == 0
-    assert node.planned_workers == 0
+    assert math.isnan(node.launched_workers)
+    assert math.isnan(node.planned_workers)
     assert node.sort_keys == ""
 
 
@@ -678,6 +678,25 @@ def test_as_qep_reads_parallel_workers_from_workers_planned() -> None:
     plan = PostgresExplain(PARALLEL_GATHER[0]["Plan"]).as_qep()
 
     assert plan.parallel_workers == 4
+
+
+def test_as_qep_prefers_launched_workers_over_planned_workers() -> None:
+    raw = {**PARALLEL_GATHER[0]["Plan"], "Workers Launched": 2}
+
+    assert PostgresExplain(raw).as_qep().parallel_workers == 2
+
+
+def test_as_qep_does_not_fall_back_to_planned_workers_if_none_were_launched() -> None:
+    """Regression test: the optimizer planned workers, but the executor launched none (`Workers Launched` = 0).
+
+    The 0 used to be indistinguishable from "not reported", so the plan silently reported the *planned* workers.
+    """
+    raw = {**PARALLEL_GATHER[0]["Plan"], "Workers Launched": 0}
+    node = PostgresExplain(raw)
+
+    assert node.launched_workers == 0
+    assert node.planned_workers == 4
+    assert node.as_qep().parallel_workers == 0
 
 
 def test_as_qep_parallel_workers_is_zero_for_sequential_nodes() -> None:

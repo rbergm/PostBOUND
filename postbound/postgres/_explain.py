@@ -143,11 +143,11 @@ class PostgresExplain:
     parent_relationship : str | None, default None
         Describes the role that this node plays in relation to its parent. Common values are *inner* which denotes that
         this is the inner child of a join and *outer* which denotes the opposite.
-    launched_workers : int, default 0
+    launched_workers : int, default NaN
         For parallel operators in *EXPLAIN ANALYZE* plans, this is the actual number of worker processes that were started.
         Notice that in total there is one additional worker. This process takes care of spawning the other workers and
         managing them, but can also take part in the input processing.
-    planned_workers : int, default 0
+    planned_workers : int, default NaN
         For parallel operators, this is the number of worker processes that the optimizer intended to start. The actual
         number of workers can be lower, e.g. if not enough worker slots were available at execution time.
     sort_keys : str, default ""
@@ -207,8 +207,8 @@ class PostgresExplain:
         self.hash_condition: str | None = explain_data.get("Hash Cond")
         self.recheck_condition: str | None = explain_data.get("Recheck Cond")
         self.parent_relationship: str | None = explain_data.get("Parent Relationship")
-        self.launched_workers: int = explain_data.get("Workers Launched", 0)
-        self.planned_workers: int = explain_data.get("Workers Planned", 0)
+        self.launched_workers: int = explain_data.get("Workers Launched", math.nan)
+        self.planned_workers: int = explain_data.get("Workers Planned", math.nan)
         self.sort_keys: str = explain_data.get("Sort Key", "")
 
         self.shared_blocks_read: int = explain_data.get("Shared Read Blocks", math.nan)
@@ -416,9 +416,9 @@ class PostgresExplain:
         shared_hits = None if math.isnan(self.shared_blocks_cached) else self.shared_blocks_cached
         shared_misses = None if math.isnan(self.shared_blocks_read) else self.shared_blocks_read
 
-        if self.launched_workers > 0:
+        if not math.isnan(self.launched_workers):
             par_workers = self.launched_workers
-        elif self.planned_workers > 0:
+        elif not math.isnan(self.planned_workers):
             par_workers = self.planned_workers
         else:
             par_workers = None
