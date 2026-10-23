@@ -10,8 +10,7 @@ The three strategies have different contracts, which the tests check separately:
 - "bound-lower" leaves out the bucket containing the value and never over-estimates;
 - "bound-upper" counts that bucket entirely and never under-estimates;
 - "approx-uni" interpolates within the bucket and satisfies ``frequency_below(v) + frequency_above(v) == n_rows``,
-  since ``<=`` and ``>`` partition the rows;
-- the deprecated "bound" is an alias for "bound-upper" that emits a `DeprecationWarning` at the caller.
+  since ``<=`` and ``>`` partition the rows. Its estimates are rounded to the nearest integer.
 
 All of them are exact on bucket bounds. The bounding contracts are checked against a concrete dataset
 (`DATASET`), not only against the equi-depth histogram. Every strategy can be the histogram's default or be passed
@@ -23,7 +22,6 @@ the DuckDB tests in `tests/test_duckdb.py`.
 
 from __future__ import annotations
 
-import warnings
 from datetime import date
 
 import pytest
@@ -159,10 +157,18 @@ def test_frequency_below_with_upper_bound_strategy_counts_the_containing_bucket(
     assert equi_depth().frequency_below(value, interpolation="bound-upper") == expected
 
 
-@pytest.mark.parametrize("value", [0, 5, 12, 15, 25, 29.5])
-def test_frequency_below_with_uniform_approximation_interpolates_within_the_bucket(value: float) -> None:
+@pytest.mark.parametrize("value", [0, 5, 12, 15, 25])
+def test_frequency_below_with_uniform_approximation_interpolates_within_the_bucket(value: int) -> None:
     """For this histogram, the uniform assumption puts exactly one row per unit, so the estimate equals `value`."""
-    assert equi_depth().frequency_below(value, interpolation="approx-uni") == pytest.approx(value)
+    assert equi_depth().frequency_below(value, interpolation="approx-uni") == value
+
+
+@pytest.mark.parametrize(("value", "expected"), [(12.3, 12), (12.7, 13)])
+def test_frequency_below_with_uniform_approximation_rounds_to_the_nearest_integer(value: float, expected: int) -> None:
+    estimate = equi_depth().frequency_below(value, interpolation="approx-uni")
+
+    assert isinstance(estimate, int)
+    assert estimate == expected
 
 
 @pytest.mark.parametrize(
@@ -224,9 +230,17 @@ def test_frequency_above_with_upper_bound_strategy_counts_the_containing_bucket(
     assert equi_depth().frequency_above(value, interpolation="bound-upper") == expected
 
 
-@pytest.mark.parametrize("value", [0, 5, 12, 15, 25, 29.5])
-def test_frequency_above_with_uniform_approximation_interpolates_within_the_bucket(value: float) -> None:
-    assert equi_depth().frequency_above(value, interpolation="approx-uni") == pytest.approx(30 - value)
+@pytest.mark.parametrize("value", [0, 5, 12, 15, 25])
+def test_frequency_above_with_uniform_approximation_interpolates_within_the_bucket(value: int) -> None:
+    assert equi_depth().frequency_above(value, interpolation="approx-uni") == 30 - value
+
+
+@pytest.mark.parametrize(("value", "expected"), [(12.3, 18), (12.7, 17)])
+def test_frequency_above_with_uniform_approximation_rounds_to_the_nearest_integer(value: float, expected: int) -> None:
+    estimate = equi_depth().frequency_above(value, interpolation="approx-uni")
+
+    assert isinstance(estimate, int)
+    assert estimate == expected
 
 
 @pytest.mark.parametrize(
@@ -270,7 +284,7 @@ def test_every_strategy_is_exact_on_the_bucket_bounds_of_a_dataset(
 def test_frequency_estimates_with_uniform_approximation_partition_the_rows(value: float) -> None:
     hist = equi_depth("approx-uni")
 
-    assert hist.frequency_below(value) + hist.frequency_above(value) == pytest.approx(hist.n_rows)
+    assert hist.frequency_below(value) + hist.frequency_above(value) == hist.n_rows
 
 
 @pytest.mark.parametrize("value", DATASET_PROBES)
@@ -309,67 +323,34 @@ def test_interpolation_override_applies_to_a_single_estimate_only() -> None:
     hist = equi_depth("bound-lower")
 
     assert hist.frequency_below(15, interpolation="bound-upper") == 20
-    assert hist.frequency_above(15, interpolation="approx-uni") == pytest.approx(15)
+    assert hist.frequency_above(15, interpolation="approx-uni") == 15
 
     assert hist.bucket_interpolation == "bound-lower"
     assert hist.frequency_below(15) == 10
     assert hist.frequency_above(15) == 10
 
 
-# -- deprecated "bound" alias ------------------------------------------------------------------------------
-
-DEPRECATION_MESSAGE = "'bound' interpolation strategy is deprecated and will be removed in version 0.23.0"
+# -- removed "bound" strategy ------------------------------------------------------------------------------
 
 
-def test_deprecated_bound_strategy_is_stored_as_upper_bound_in_the_constructor() -> None:
-    hist = Histogram([10, 20, 30], [10, 10, 10], lower=0, bucket_interpolation="bound")
-
-    assert hist.bucket_interpolation == "bound-upper"
-    assert hist == equi_depth("bound-upper")
+def test_removed_bound_strategy_is_rejected_by_the_constructor() -> None:
+    with pytest.raises(ValueError, match="Unsupported bucket interpolation strategy: bound"):
+        Histogram([10, 20, 30], [10, 10, 10], lower=0, bucket_interpolation="bound")
 
 
-def test_deprecated_bound_strategy_is_stored_as_upper_bound_by_the_setter() -> None:
+def test_removed_bound_strategy_is_rejected_by_the_setter() -> None:
     hist = equi_depth("approx-uni")
-    hist.bucket_interpolation = "bound"
 
-    assert hist.bucket_interpolation == "bound-upper"
+    with pytest.raises(ValueError, match="Unsupported bucket interpolation strategy: bound"):
+        hist.bucket_interpolation = "bound"  # ty: ignore[invalid-assignment]
+
+    assert hist.bucket_interpolation == "approx-uni"
 
 
 @pytest.mark.parametrize("estimate", ["frequency_below", "frequency_above"])
-@pytest.mark.parametrize("value", DATASET_PROBES)
-def test_deprecated_bound_override_estimates_like_the_upper_bound(estimate: str, value: float) -> None:
-    hist = Histogram([2, 7, 9], [8, 8, 4], lower=1, bucket_interpolation="bound-lower")
-
-    deprecated = getattr(hist, estimate)(value, interpolation="bound")
-
-    assert deprecated == getattr(hist, estimate)(value, interpolation="bound-upper")
-
-
-def _deprecated_bound_via_constructor() -> None:
-    Histogram([10], [5], lower=0, bucket_interpolation="bound")
-
-
-def _deprecated_bound_via_setter() -> None:
-    equi_depth().bucket_interpolation = "bound"
-
-
-def _deprecated_bound_via_frequency_below() -> None:
-    equi_depth().frequency_below(15, interpolation="bound")
-
-
-def _deprecated_bound_via_frequency_above() -> None:
-    equi_depth().frequency_above(15, interpolation="bound")
-
-
-@pytest.mark.parametrize("strategy", STRATEGIES)
-def test_supported_strategies_do_not_warn(strategy: HistogramApproximation) -> None:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-
-        hist = equi_depth(strategy)
-        hist.bucket_interpolation = strategy
-        hist.frequency_below(15, interpolation=strategy)
-        hist.frequency_above(15, interpolation=strategy)
+def test_removed_bound_strategy_is_rejected_as_override(estimate: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported bucket interpolation strategy: bound"):
+        getattr(equi_depth(), estimate)(15, interpolation="bound")
 
 
 # -- equality and serialization -----------------------------------------------------------------------------
@@ -411,7 +392,7 @@ def test_frequency_below_with_uniform_approximation_counts_all_complete_buckets(
     every estimate inside the histogram was one bucket short (``frequency_below(15)`` was 5). The first bucket was
     never interpolated at all (``frequency_below(5)`` was 0), since `lower` was not used by any estimate.
     """
-    assert equi_depth("approx-uni").frequency_below(value) == pytest.approx(expected)
+    assert equi_depth("approx-uni").frequency_below(value) == expected
 
 
 @pytest.mark.parametrize(("value", "expected"), [(10, 20), (12, 20), (20, 10), (25, 10), (30, 0)])
@@ -429,7 +410,7 @@ def test_frequency_above_with_uniform_approximation_handles_the_last_bucket(valu
     """Regression guard for af3c87c (v0.22.2): for a value in the last bucket, `Histogram.frequency_above` read
     ``bounds[lower_idx + 1]`` past the end of the list and raised an `IndexError`.
     """
-    assert equi_depth("approx-uni").frequency_above(value) == pytest.approx(expected)
+    assert equi_depth("approx-uni").frequency_above(value) == expected
 
 
 def test_frequency_above_with_uniform_approximation_interpolates_in_the_bucket_containing_the_value() -> None:
@@ -439,8 +420,8 @@ def test_frequency_above_with_uniform_approximation_interpolates_in_the_bucket_c
     """
     hist = Histogram([10, 20, 30, 40], [10, 10, 10, 10], lower=0, bucket_interpolation="approx-uni")
 
-    assert hist.frequency_above(15) == pytest.approx(25)
-    assert hist.frequency_above(12) == pytest.approx(28)
+    assert hist.frequency_above(15) == 25
+    assert hist.frequency_above(12) == 28
 
 
 def test_frequency_estimates_use_the_bucket_frequencies() -> None:
@@ -454,8 +435,8 @@ def test_frequency_estimates_use_the_bucket_frequencies() -> None:
     assert hist.frequency_below(10, interpolation="bound-lower") == 90
     assert hist.frequency_below(10, interpolation="bound-upper") == 90
     assert hist.frequency_above(10, interpolation="bound-upper") == 10
-    assert hist.frequency_below(15, interpolation="approx-uni") == pytest.approx(95)
-    assert hist.frequency_above(5, interpolation="approx-uni") == pytest.approx(55)
+    assert hist.frequency_below(15, interpolation="approx-uni") == 95
+    assert hist.frequency_above(5, interpolation="approx-uni") == 55
 
 
 def test_histogram_constructor_rejects_an_unknown_strategy() -> None:
@@ -465,3 +446,14 @@ def test_histogram_constructor_rejects_an_unknown_strategy() -> None:
     """
     with pytest.raises(ValueError, match="Unsupported bucket interpolation strategy: linear"):
         Histogram([10, 20, 30], [10, 10, 10], lower=0, bucket_interpolation="linear")
+
+
+@pytest.mark.parametrize("estimate", ["frequency_below", "frequency_above"])
+def test_estimates_reject_an_unknown_interpolation_override(estimate: str) -> None:
+    """Regression guard for the removal of the "bound" alias (v0.23.0): the per-call `interpolation` override was not
+    validated, unlike the constructor and the setter. `frequency_below` fell through to the uniform interpolation for
+    any unknown strategy (``frequency_below(15, interpolation="bound")`` silently returned 15 instead of the upper
+    bound 20), while `frequency_above` raised a bare `KeyError` from the strategy mirroring.
+    """
+    with pytest.raises(ValueError, match="Unsupported bucket interpolation strategy: linear"):
+        getattr(equi_depth(), estimate)(15, interpolation="linear")

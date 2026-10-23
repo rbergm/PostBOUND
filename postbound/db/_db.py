@@ -1966,13 +1966,10 @@ class MostCommonValues[T]:
         return str(self.mcvs)
 
 
-HistogramApproximation = Literal["approx-uni", "bound-lower", "bound-upper", "bound"]
+HistogramApproximation = Literal["approx-uni", "bound-lower", "bound-upper"]
 """The strategy to estimate the frequency of values that are not exactly on the bucket bounds of a histogram.
 
 See `Histogram` for the semantics of the individual strategies.
-
-.. deprecated:: 0.22.3
-    "bound" is a deprecated alias for "bound_upper" and will be removed in version 0.23.0.
 """
 
 _MirroredStrategies: dict[HistogramApproximation, HistogramApproximation] = {
@@ -2034,9 +2031,6 @@ class Histogram[T: _HistElem]:
         The default strategy to estimate the frequency of values that fall into a bucket, but are not exactly on the
         bucket bounds. The default is "approx-uni".
 
-        .. deprecated:: 0.22.3
-            "bound" is a deprecated alias for "bound-upper" and will be removed in version 0.23.0.
-
     Raises
     ------
     ValueError
@@ -2069,7 +2063,6 @@ class Histogram[T: _HistElem]:
         self._lower = lower
         self._freq_per_bucket = self._n_rows // len(self._bounds)
         self._cumulative_frequencies = [0, *itertools.accumulate(self._frequencies)]
-        bucket_interpolation = "bound-upper" if bucket_interpolation == "bound" else bucket_interpolation
         self._bucket_interpolation = bucket_interpolation
 
     @property
@@ -2116,7 +2109,6 @@ class Histogram[T: _HistElem]:
 
     @bucket_interpolation.setter
     def bucket_interpolation(self, strategy: HistogramApproximation) -> None:
-        strategy = "bound-upper" if strategy == "bound" else strategy
         if strategy not in get_args(HistogramApproximation):
             raise ValueError(f"Unsupported bucket interpolation strategy: {strategy}.")
         self._bucket_interpolation = strategy
@@ -2125,7 +2117,7 @@ class Histogram[T: _HistElem]:
         """Get the cardinality of the histogram, i.e. the number of rows that are represented by it."""
         return Cardinality.of(self._n_rows)
 
-    def frequency_below(self, value: T, *, interpolation: HistogramApproximation | None = None) -> float:
+    def frequency_below(self, value: T, *, interpolation: HistogramApproximation | None = None) -> int:
         """Estimate the frequency of values that are less than or equal to a given value.
 
         Parameters
@@ -2136,16 +2128,15 @@ class Histogram[T: _HistElem]:
             The strategy to use for this estimate only, if the value does not align exactly with the bucket bounds. If
             omitted, the histogram's default `bucket_interpolation` is used. See the class documentation for details.
 
-            .. deprecated:: 0.22.3
-                "bound" is a deprecated alias for "bound-upper" and will be removed in version 0.23.0.
-
         Returns
         -------
-        float
-            The estimated number of rows. Interpolated estimates are not rounded and can therefore be fractional.
+        int
+            The estimated number of rows. Interpolated estimates are rounded.
         """
-        interpolation = "bound-upper" if interpolation == "bound" else interpolation
         strategy = self._bucket_interpolation if interpolation is None else interpolation
+        if strategy not in get_args(HistogramApproximation):
+            raise ValueError(f"Unsupported bucket interpolation strategy: {strategy}.")
+
         if value < self._lower:
             return 0
 
@@ -2168,9 +2159,11 @@ class Histogram[T: _HistElem]:
         lower_bound = self._bounds[upper_idx - 1] if upper_idx > 0 else self._lower
         upper_bound = self._bounds[upper_idx]
         in_bucket_frac = (value - lower_bound) / (upper_bound - lower_bound)
-        return complete_buckets + in_bucket_frac * self._frequencies[upper_idx]
 
-    def frequency_above(self, value: T, *, interpolation: HistogramApproximation | None = None) -> float:
+        freq = complete_buckets + in_bucket_frac * self._frequencies[upper_idx]
+        return round(freq)
+
+    def frequency_above(self, value: T, *, interpolation: HistogramApproximation | None = None) -> int:
         """Estimate the frequency of values that are greater than a given value.
 
         Due to the way we model histograms, we cannot directly estimate the frequency of values greater or equal to a given
@@ -2184,21 +2177,20 @@ class Histogram[T: _HistElem]:
             The strategy to use for this estimate only, if the value does not align exactly with the bucket bounds. If
             omitted, the histogram's default `bucket_interpolation` is used. See the class documentation for details.
 
-            .. deprecated:: 0.22.3
-                "bound" is a deprecated alias for "bound-upper" and will be removed in version 0.23.0.
-
         Returns
         -------
-        float
-            The estimated number of rows. Interpolated estimates are not rounded and can therefore be fractional.
+        int
+            The estimated number of rows. Interpolated estimates are rounded.
         """
-        strategy = "bound-upper" if interpolation == "bound" else interpolation
-        strategy = self._bucket_interpolation if strategy is None else strategy
+        strategy = self._bucket_interpolation if interpolation is None else interpolation
+        if strategy not in get_args(HistogramApproximation):
+            raise ValueError(f"Unsupported bucket interpolation strategy: {strategy}.")
 
         # The rows > value are exactly the rows that are not <= value. To keep the direction of a bound intact, we need
         # to estimate the rows <= value with the mirrored strategy: an upper bound of the rows > value is given by a
         # lower bound of the rows <= value, and vice versa.
-        return self._n_rows - self.frequency_below(value, interpolation=_MirroredStrategies[strategy])
+        freq = self._n_rows - self.frequency_below(value, interpolation=_MirroredStrategies[strategy])
+        return round(freq)
 
     def __len__(self) -> int:
         return len(self._bounds)
