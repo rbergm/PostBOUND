@@ -121,32 +121,29 @@ def test_histogram_of_a_column_without_values_raises() -> None:
 # -- regression tests --------------------------------------------------------------------------------------
 
 
-def test_num_distinct_counts_null_as_a_distinct_value() -> None:
-    """Regression guard for the NULL handling in `PreciseStatistics.num_distinct`: it only ran
-    ``COUNT(DISTINCT col)``, which ignores NULLs, while the native Postgres catalog counts NULL as one additional
-    distinct value. The two catalogs disagreed for every column containing NULLs.
+def test_num_distinct_does_not_count_null_as_a_distinct_value() -> None:
+    """Regression guard for the NULL rework of the statistics catalog: `num_distinct` used to issue a second query to
+    detect NULLs and counted NULL as one additional distinct value. All statistics now exclude NULLs, so only the
+    ``COUNT(DISTINCT col)`` query is issued (the strict double rejects any other query).
     """
-    db = FakeDatabase(results={"count(distinct": [(2,)], "is null": [(None, 7)]})
-
-    n_distinct = PreciseStatistics(db).num_distinct(R_A)
-
-    assert n_distinct == 3
-
-
-def test_num_distinct_does_not_count_null_for_a_column_without_nulls() -> None:
-    db = FakeDatabase(results={"count(distinct": [(2,)], "is null": []})
+    db = FakeDatabase(results={"count(distinct": [(2,)]})
 
     n_distinct = PreciseStatistics(db).num_distinct(R_A)
 
     assert n_distinct == 2
+    assert len(db.executed_queries) == 1
 
 
-def test_num_distinct_catches_the_null_of_a_single_column_table() -> None:
-    db = FakeDatabase(results={"count(distinct": [(2,)], "is null": [(None,)]})
+def test_most_common_values_exclude_null() -> None:
+    """Regression guard for the NULL rework of the statistics catalog: the MCV query grouped by the column without
+    filtering NULLs, so the NULL group (with ``COUNT(col) = 0``) became part of the MCVs whenever fewer than `k`
+    distinct values existed or all values were requested.
+    """
+    db = FakeDatabase(results={"group by": [(1, 5)]})
 
-    n_distinct = PreciseStatistics(db).num_distinct(R_A)
+    PreciseStatistics(db).most_common_values(R_A, k=None)
 
-    assert n_distinct == 3
+    assert "where r.a is not null" in db.executed_queries[0]
 
 
 def test_histogram_closes_a_final_bucket_for_the_remaining_values() -> None:

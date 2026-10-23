@@ -197,3 +197,41 @@ class RegressionTests(unittest.TestCase):
     def test_execute_no_result_set(self) -> None:
         res = self.pg_instance.execute_query("SET geqo TO off")
         self.assertIsNone(res, "Queries that do not provide a result set should return None")
+
+
+# -- regression tests --------------------------------------------------------------------------------------
+
+
+@regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_stats")
+@pytest.mark.live_db
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("votes", "bountyamount"),
+        ("posts", "answercount"),
+        ("posts", "owneruserid"),
+        ("comments", "userid"),
+        ("posts", "closeddate"),
+    ],
+    ids=["mcvs-inside-buckets", "mcvs-below-histogram", "many-mcvs", "large-mcv-share", "timestamp"],
+)
+def test_postgres_histogram_merges_the_mcvs_into_a_consistent_histogram(table: str, column: str) -> None:
+    """Regression guard for the histogram reconstruction of `PostgresStatistics`: the MCVs were merged in frequency
+    rather than value order, which produced non-monotone bounds, and the MCV rows were counted twice (comments.userid
+    had 254,600 histogram rows for 171,470 non-NULL rows). Timestamp columns could not be read at all.
+
+    The histogram must be sorted and cover all non-NULL rows. Since the catalog is sampled, the row count is checked
+    against the catalog's own estimate of the non-NULL rows rather than the true count.
+    """
+    pg_instance = pb.postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_stats", private=True)
+    col = pb.ColumnReference(column, pb.TableReference(table))
+    stats = pg_instance.statistics()
+
+    hist = stats.histogram(col)
+
+    assert hist is not None
+    assert hist.bounds == sorted(set(hist.bounds))
+    assert hist.lower <= hist.bounds[0]
+    n_rows, null_frac = stats.total_rows(col.table), stats.null_frac(col)
+    assert n_rows is not None and null_frac is not None
+    assert hist.n_rows == pytest.approx((1 - null_frac) * int(n_rows), rel=0.01)

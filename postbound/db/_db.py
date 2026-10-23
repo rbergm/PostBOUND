@@ -2239,22 +2239,35 @@ class Histogram[T: _HistElem]:
 class StatisticsCatalog(ABC):
     """The statistics interface provides unified access to table-level and column-level statistics.
 
-    Different database systems maintain different sets of statistics for their specific optimizers. Therefore, this interface
-    focuses on the most commonly available and most basic statistics. Because even this subset is not available across all
-    supported backends, the catalog allows for *emulation* of statistics: if a statistic is not supported by a specific
-    database system, an equivalent SQL query that computes the required statistic is executed.
+    Different database systems maintain different sets of statistics for their specific optimizers. Therefore, this
+    interface focuses on the most commonly available and most basic statistics. Because even this subset is not available
+    across all supported backends, the catalog allows for *emulation* of statistics: if a statistic is not supported by a
+    specific database system, an equivalent SQL query that computes the required statistic is executed.
 
     As a consequence of this process, emulated statistics are always exact, while statistics that are maintained by the
-    database system are usually only estimates. If this discrepancy is relevant for a specific use case, there are two options:
-    1) statistics emulation can be disabled globally, in which case systems raise an error if a statistic is not supported.
-    2) `PreciseStatistics` can be used instead, which emulates all statistics and thus provides exact values for all statistics.
+    database system are usually only estimates. If this discrepancy is relevant for a specific use case, there are two
+    options:
+    1) statistics emulation can be disabled globally, in which case systems raise an error if a statistic is not
+       supported.
+    2) `PreciseStatistics` can be used instead, which emulates all statistics and thus provides exact values for all
+       statistics.
 
-    Statistic emulation is not triggered when a database system in principle maintains a statistic, but it does not have a value
-    for a specific table or column. In this case, *None* is returned to indicate that the statistic is absent.
+    Statistic emulation is not triggered when a database system in principle maintains a statistic, but it does not have
+    a value for a specific table or column. In this case, *None* is returned to indicate that the statistic is absent.
+
+    NULL handling
+    -------------
+    NULL values make all statistics rather complicated. For example, including NULLs in a histogram does not make sence,
+    because NULLs are not comparable to any other value. On the other hand, it is not as clear whether NULLs should be
+    part of the MCVs or influence the number of distinct values. At the same time, including NULLs in one statistic but
+    excluding it from another might lead to inconsistencies and thus introduce subtle bugs. Therefore, we define the
+    statistics catalog to exclude NULLs from all statistics (except for `null_frac` of course). Backends need to follow
+    this convention and filter out NULLs whenever possible. Note that Postgres uses the same convention, so this is
+    not a problem for the PG backend and our decision seemingly is nothing too esoteric.
 
     See Also
     --------
-    PreciseStatistics : A statistics catalog that emulates all statistics and thus provides exact values for all statistics.
+    PreciseStatistics : A statistics catalog that emulates all statistics and thus provides exact values for them.
     """
 
     @abstractmethod

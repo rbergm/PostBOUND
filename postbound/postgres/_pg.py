@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import bisect
 import collections
 import configparser
 import datetime
 import functools
+import itertools
 import json
 import math
 import multiprocessing as mp
@@ -1017,10 +1017,99 @@ class PostgresSchema(DatabaseSchema):
 # For example, suppose a column contains integer values. If this column is aggregated into an anyarray entry, the
 # appropriate converter for this array is int[]. In other words DTypeArrayConverters["integer"] = "int[]"
 _DTypeArrayConverters = {
+    "smallint": "smallint[]",
     "integer": "int[]",
+    "bigint": "bigint[]",
+    "numeric": "numeric[]",
+    "real": "real[]",
+    "double precision": "double precision[]",
     "text": "text[]",
     "character varying": "text[]",
+    "character": "text[]",
+    "date": "date[]",
+    "timestamp without time zone": "timestamp[]",
+    "timestamp with time zone": "timestamptz[]",
 }
+
+
+def _bucket_position(value: Any, lower: Any, upper: Any) -> float:
+    """Estimates which fraction of the bucket *[lower, upper]* lies below `value`, assuming uniformly spread values.
+
+    For types that do not support arithmetic (e.g. text), the value is assumed to be in the middle of the bucket.
+    """
+    if value <= lower:
+        return 0.0
+    if value >= upper:
+        return 1.0
+    try:
+        return float((value - lower) / (upper - lower))
+    except (TypeError, ZeroDivisionError):
+        return 0.5
+
+
+def _merge_histogram_and_mcvs(
+    bounds: list[Any], mcvs: Iterable[tuple[Any, int]], *, hist_rows: float
+) -> tuple[Any, list[Any], list[int]]:
+    """Combines the histogram bounds and the MCVs of a Postgres column into a single histogram.
+
+    The *N + 1* `bounds` describe an equi-depth histogram with *N* buckets over all non-NULL values that are not part of
+    the MCV list, i.e. each bucket contains *hist_rows / N* rows. Since ANALYZE removes the MCVs before choosing the
+    bounds, an MCV is never a bound itself. Instead, it can fall into any bucket or lie outside of the histogram range.
+
+    Each MCV becomes an additional bucket bound. If it falls into a histogram bucket, the bucket is split at the MCV
+    and the bucket's rows are distributed among both parts under the uniformity assumption. Duplicate bounds (which
+    Postgres produces for very frequent non-MCV values) are collapsed into a single bound with the summed frequency.
+
+    Returns
+    -------
+    tuple[Any, list[Any], list[int]]
+        The lower bound of the histogram, the upper bounds of all buckets and their frequencies.
+    """
+    mcvs = sorted(mcvs, key=lambda mcv: mcv[0])
+    n_buckets = len(bounds) - 1
+    bucket_freq = hist_rows / n_buckets if n_buckets > 0 else hist_rows
+
+    merged_bounds: list[Any] = []
+    merged_freqs: list[float] = []
+
+    def emit(bound: Any, freq: float) -> None:
+        if merged_bounds and merged_bounds[-1] == bound:
+            merged_freqs[-1] += freq
+        else:
+            merged_bounds.append(bound)
+            merged_freqs.append(freq)
+
+    hist_lower = bounds[0]
+    mcv_idx = 0
+    while mcv_idx < len(mcvs) and mcvs[mcv_idx][0] < hist_lower:
+        emit(*mcvs[mcv_idx])
+        mcv_idx += 1
+
+    if n_buckets == 0 or merged_bounds:
+        # The histogram's lower bound only needs a bucket of its own if it is not the lower bound of the merged
+        # histogram. Rows equal to the lower bound are (approximately) attributed to the first histogram bucket.
+        emit(hist_lower, 0 if n_buckets > 0 else bucket_freq)
+
+    for bucket_lower, bucket_upper in itertools.pairwise(bounds):
+        consumed_frac = 0.0
+        while mcv_idx < len(mcvs) and mcvs[mcv_idx][0] <= bucket_upper:
+            mcv_val, mcv_freq = mcvs[mcv_idx]
+            mcv_frac = _bucket_position(mcv_val, bucket_lower, bucket_upper)
+            emit(mcv_val, bucket_freq * (mcv_frac - consumed_frac) + mcv_freq)
+            consumed_frac = mcv_frac
+            mcv_idx += 1
+        emit(bucket_upper, bucket_freq * (1 - consumed_frac))
+
+    for mcv in mcvs[mcv_idx:]:
+        emit(*mcv)
+
+    # Rounding each bucket individually would accumulate the rounding errors (up to half a row per bucket), so we round
+    # the cumulative frequencies instead. This keeps the total number of rows intact.
+    cumulative_freqs = [0, *(round(freq) for freq in itertools.accumulate(merged_freqs))]
+    rounded_freqs = [upper - lower for lower, upper in itertools.pairwise(cumulative_freqs)]
+
+    lower = mcvs[0][0] if mcvs and mcvs[0][0] < hist_lower else hist_lower
+    return lower, merged_bounds, rounded_freqs
 
 
 class PostgresStatistics(StatisticsCatalog):
@@ -1259,10 +1348,6 @@ class PostgresStatistics(StatisticsCatalog):
             return None
         dist_values = result_set[0]
 
-        null_frac = self.null_frac(column)
-        assert null_frac is not None
-        null_correction = 1 if null_frac > 0 else 0
-
         # interpreting the n_distinct column is difficult, since different value ranges indicate different things
         # (see https://www.postgresql.org/docs/current/view-pg-stats.html)
         # If the value is >= 0, it represents the actual (approximated) number of distinct non-zero values in the
@@ -1270,13 +1355,13 @@ class PostgresStatistics(StatisticsCatalog):
         # If the value is < 0, it represents 'the negative of the number of distinct values divided by the number of
         # rows'. Therefore, we have to correct the number of distinct values manually in this case.
         if dist_values >= 0:
-            return int(dist_values) + null_correction
+            return int(dist_values)
 
         # correct negative values
         n_rows = self.total_rows(column.table)
         assert n_rows is not None, "Could not retrieve total row count for table"
 
-        return -1 * int(n_rows) * dist_values + null_correction
+        return round(-1 * dist_values * int(n_rows))
 
     def null_frac(self, column: ColumnReference) -> float | None:
         if not ColumnReference.assert_bound(column):
@@ -1330,8 +1415,6 @@ class PostgresStatistics(StatisticsCatalog):
                 AND schemaname = %s
         """
 
-        # NB: we have to repeat a few parameters here. Unfortunately, it seems that psycopg
-        # does not support casts for named parameters - %(tab)s::regclass does not work
         self._db.cursor().execute(
             mcv_query,  # type: ignore - weird psycopg stuff
             (
@@ -1348,25 +1431,14 @@ class PostgresStatistics(StatisticsCatalog):
         # Sadly our job is not done yet:
         #
         # Postgres handles NULLs separately and importantly does not allow them to become part of the MCVs.
-        # But since the MCV frequencies are relative to the total number of (none-NULL) values, we need to scale
-        # them up to obtain the true frequency.
-        #
-        # What is worse, is that NULL might itself be one of the MCVs.
-        # Therefore, we also have to insert it back in.
+        # This is a very reasonable decision and we follow it for the statistics catalog as well.
+        # The MCV frequencies are relative to the total number of rows (including NULLs), so we need to scale them up
+        # to obtain the true frequency.
 
         n_rows = self.total_rows(column.table)
-        null_frac = self.null_frac(column)
-        assert n_rows is not None and null_frac is not None
-        scale_up = float((1 - null_frac) * n_rows)
+        assert n_rows is not None, "Could not retrieve total row count for table"
 
-        result_set: list[tuple[Any, int]] = [(val, int(freq * scale_up)) for val, freq in result_set]
-
-        min_freq = result_set[-1][1]
-        n_nulls = int(null_frac * n_rows)
-        if n_nulls > min_freq:
-            null_tuple = (None, n_nulls)
-            bisect.insort_left(result_set, null_tuple, key=lambda x: x[1])
-
+        result_set = [(val, round(freq * int(n_rows))) for val, freq in result_set]
         return MostCommonValues(result_set)
 
     def histogram(
@@ -1405,8 +1477,8 @@ class PostgresStatistics(StatisticsCatalog):
         # This is because PG constructs an equi-depth histogram so all buckets (should) have (more or less) the same
         # frequency. As a consequence it would be redundant to explicitly store this information. We need to infer
         # the frequency based on the total number of rows and tuples.
-        # But there is more, because we ALSO need to take care with NULL values because they appear in the total rows
-        # but not in the histogram.
+        # But there is more, because we ALSO need to take care with NULL values and MCVs because they appear in the
+        # total rows but not in the histogram.
         #
         # Stuff is complicated, man.
 
@@ -1414,63 +1486,14 @@ class PostgresStatistics(StatisticsCatalog):
         null_frac = self.null_frac(column)
         assert n_rows is not None and null_frac is not None
 
-        bucket_freq = round((1 - null_frac) * n_rows // len(bounds))
-
         mcvs = self.most_common_values(column)
         if mcvs is None:
             mcvs = MostCommonValues.empty()
 
-        normalized_bounds = []
-        normalized_frequencies: list[int] = []
-        lo = None
-        hist_iter = iter(bounds)
-        mcv_iter = iter(mcvs)
-        cur_hist = next(hist_iter, None)
-        cur_mcv = next(mcv_iter, None)
-        while cur_hist is not None or cur_mcv is not None:
-            if cur_mcv is not None:
-                cur_mcv_val, cur_mcv_freq = cur_mcv
-            else:
-                cur_mcv_val, cur_mcv_freq = None, None
+        mcv_rows = sum(freq for _, freq in mcvs)
+        hist_rows = max((1 - null_frac) * int(n_rows) - mcv_rows, 0)
 
-            if lo is None:
-                lo = min(
-                    filter(None, [cur_hist, cur_mcv_val]),
-                    default=None,
-                )
-
-            if cur_hist is None:
-                assert cur_mcv_val is not None and cur_mcv_freq is not None
-                normalized_bounds.append(cur_mcv_val)
-                normalized_frequencies.append(cur_mcv_freq)
-                cur_mcv = next(mcv_iter, None)
-
-            elif cur_mcv_val is None:
-                normalized_bounds.append(cur_hist)
-                normalized_frequencies.append(bucket_freq)
-
-                prev_hist = cur_hist
-                while (cur_hist := next(hist_iter, None)) == prev_hist:
-                    # for very frequent values, Postgres might put the same value into multiple (equi-depth) buckets
-                    # in this case, we need to sum up the frequencies of all buckets with the same bound value
-                    normalized_frequencies[-1] += bucket_freq
-
-            elif cur_hist < cur_mcv_val:
-                normalized_bounds.append(cur_hist)
-                normalized_frequencies.append(bucket_freq)
-
-                prev_hist = cur_hist
-                while (cur_hist := next(hist_iter, None)) == prev_hist:
-                    # see comment above for the case of duplicate histogram bounds
-                    normalized_frequencies[-1] += bucket_freq
-
-            else:
-                assert cur_mcv_val < cur_hist and cur_mcv_freq is not None
-                normalized_bounds.append(cur_mcv_val)
-                normalized_frequencies.append(cur_mcv_freq)
-                cur_mcv = next(mcv_iter, None)
-
-        assert lo is not None
+        lo, normalized_bounds, normalized_frequencies = _merge_histogram_and_mcvs(bounds, mcvs, hist_rows=hist_rows)
         return Histogram(
             normalized_bounds,
             normalized_frequencies,
@@ -1489,7 +1512,7 @@ class PostgresStatistics(StatisticsCatalog):
         attribute_dtype = result_set[0]
         converter = _DTypeArrayConverters.get(attribute_dtype)
         if not converter:
-            raise ValueError("Cannot cast column array of type {attribute_dtype} - no converter found.")
+            raise ValueError(f"Cannot cast column array of type {attribute_dtype} - no converter found.")
         return converter
 
 
