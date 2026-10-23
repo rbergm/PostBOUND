@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from IPython.core.getipython import get_ipython
 from IPython.lib import pretty
 
 from ._hints import JoinTree, PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
-from .qal import SqlQuery, format_quick
+from .qal import SelectStatement, SetQuery, SqlQuery, format_quick
 
 
 def pretty_print_query(query: SqlQuery, p: pretty.PrettyPrinter, cycle: bool) -> None:
@@ -43,8 +44,16 @@ def pretty_print_plan_params(parameters: PlanParameterization, p: pretty.PrettyP
 
 
 def setup_pretty_printers() -> None:
-    pretty.for_type(SqlQuery, pretty_print_query)
-    pretty.for_type(QueryPlan, pretty_print_plan)
-    pretty.for_type(JoinTree, pretty_print_join_tree)
-    pretty.for_type(PhysicalOperatorAssignment, pretty_print_physical_ops)
-    pretty.for_type(PlanParameterization, pretty_print_plan_params)
+    shell = get_ipython()
+    if shell is None:
+        return
+
+    plain_formatter = shell.display_formatter.formatters["text/plain"]
+
+    plain_formatter.for_type(SqlQuery, pretty_print_query)
+    plain_formatter.for_type(SelectStatement, pretty_print_query)
+    plain_formatter.for_type(SetQuery, pretty_print_query)
+    plain_formatter.for_type(QueryPlan, pretty_print_plan)
+    plain_formatter.for_type(JoinTree, pretty_print_join_tree)
+    plain_formatter.for_type(PhysicalOperatorAssignment, pretty_print_physical_ops)
+    plain_formatter.for_type(PlanParameterization, pretty_print_plan_params)
