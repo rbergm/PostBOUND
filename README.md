@@ -113,16 +113,11 @@ class RandomJoinOrder(pb.JoinOrdering):
         if not pb.qal.is_select_query(query):
             raise pb.OptimizationError("Expected a SELECT query")
 
-        initial_table, *free_tables = random.sample(
-            list(query.tables()), k=len(query.tables())
-        )
+        initial_table, *free_tables = random.sample(list(query.tables()), k=len(query.tables()))
         join_tree = pb.JoinTree(base_table=initial_table)
 
         while free_tables:
-            candidates = [
-                table for table in free_tables
-                if query.joins_between(table, join_tree.tables())
-            ]
+            candidates = [table for table in free_tables if query.joins_between(table, join_tree.tables())]
             next_table = random.choice(candidates)
             join_tree = join_tree.join_with(next_table)
             free_tables.remove(next_table)
@@ -136,11 +131,7 @@ class RandomJoinOrder(pb.JoinOrdering):
 pg_stats = pb.postgres.connect(config_file=".psycopg_connection_stats")
 stats = pb.workloads.stats()
 
-optimization_pipeline = (
-    pb.MultiStageOptimizationPipeline(pg_stats)
-    .use(RandomJoinOrder())
-    .build()
-)
+optimization_pipeline = pb.MultiStageOptimizationPipeline(pg_stats).use(RandomJoinOrder()).build()
 
 # (Step 3): in this example we just compare against the native Postgres optimizer
 # Therefore, we do not need to setup any additional optimizers.
@@ -148,9 +139,7 @@ optimization_pipeline = (
 # Step 4: execute the workload.
 # We use the QueryPreparation to prewarm the database buffer and run all
 # queries as EXPLAIN ANALYZE.
-query_prep = pb.bench.QueryPreparation(
-    prewarm=True, analyze=True, preparatory_statements=["SET geqo TO off;"]
-)
+query_prep = pb.bench.QueryPreparation(prewarm=True, analyze=True, preparatory_statements=["SET geqo TO off;"])
 native_results = pb.bench.execute_workload(
     stats,
     on=pg_stats,
@@ -167,7 +156,6 @@ optimized_results = pb.bench.execute_workload(
     progressive_output="stats-results-optimized.csv",
     logger="tqdm",
 )
-
 ```
 
 ## 🤬 Issues

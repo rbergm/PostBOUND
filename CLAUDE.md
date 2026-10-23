@@ -165,7 +165,9 @@ deliberately not enforced are listed with their reasoning in `[tool.ruff.lint].i
 `unresolved-attribute` are enforced everywhere without exception. See `CONTRIBUTING.md`.
 
 **Docstrings** are NumPy-style (`Parameters` / `Returns` / `Raises` / `See Also` / `References` sections) and are the
-source for the Sphinx API docs — public API additions are expected to carry them. Lines wrap at 120 columns (enforced by
+source for the Sphinx API docs — public API additions are expected to carry them. Do not add a `Raises` section for
+errors that merely reject values the parameter types already rule out (e.g. a string outside a `Literal`): callers
+passing obviously wrong arguments should expect things to go wrong. Lines wrap at 120 columns (enforced by
 `ruff format`; `E501` is not enforced, so pre-existing long docstring prose still exceeds it).
 
 **CHANGELOG.md** is maintained by hand per release with fixed sections (New features / Updates / Fixes / Deprecations /
