@@ -17,7 +17,7 @@ import time
 import tomllib
 import warnings
 from collections import UserString
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
@@ -1003,6 +1003,38 @@ class PostgresSchema(DatabaseSchema):
             column = ColumnReference(col, table)
             index_cols[constraint].add(column)
         return index_cols
+
+    def indexed_columns(self, index: str) -> Sequence[BoundColumnReference]:
+        query_template = """
+        WITH indexes AS (
+            SELECT
+                rel.oid,
+                rel.relname,
+                nsp.nspname,
+                unnest(idx.indkey) as indkey,
+                generate_series(1, array_length(idx.indkey, 1)) as ord
+            FROM pg_index idx
+                JOIN pg_class cls ON idx.indexrelid = cls.oid
+                JOIN pg_class rel ON idx.indrelid = rel.oid
+                JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+            WHERE cls.relname = %s
+        )
+        SELECT att.attname, indexes.relname, indexes.nspname
+        FROM indexes
+            JOIN pg_attribute att
+            ON att.attrelid = indexes.oid AND att.attnum = indexes.indkey
+        ORDER BY indexes.ord;
+        """
+        cur = self._db.cursor()
+        cur.execute(query_template, (index,))
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        indexed_cols: list[BoundColumnReference] = []
+        for col, table_name, schema in result_set:
+            table_ref = self._as_tabref(table_name, schema=schema, catalog="")
+            indexed_cols.append(ColumnReference(col, table_ref))
+        return indexed_cols
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._db == other._db
